@@ -117,3 +117,4 @@ Read these docs before implementation:
 - `docs/ux-flow.md`
 - `docs/technical-stack.md`
 - `docs/pricing-strategy.md`
+- `docs/asset-processing.md`

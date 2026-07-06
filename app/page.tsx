@@ -62,7 +62,7 @@ export default function HomePage() {
           <p className="text-sm font-medium uppercase tracking-[0.3em] text-stone-400">Prototype</p>
           <h2 className="mt-2 text-2xl font-semibold">Designed for a single shareable review link</h2>
           <ul className="mt-6 space-y-3 text-sm text-stone-300">
-            <li>• Compare options side by side or together</li>
+            <li>• Review assets in a large preview canvas</li>
             <li>• Pin comments directly onto visual surfaces</li>
             <li>• Capture a final decision without account creation</li>
           </ul>

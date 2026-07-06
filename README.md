@@ -43,6 +43,8 @@ Text assets, live website embedding, automatic URL screenshots, billing, teams, 
    ```
 3. Open http://localhost:3000
 
+To connect the prototype to Supabase, copy [.env.local.example](.env.local.example) to .env.local and add your project URL and anon key. The app will use Supabase when those values are present, and fall back to the built-in mock data otherwise.
+
 The prototype includes:
 - a dashboard of recent reviews
 - a review builder with share settings and section creation
@@ -54,5 +56,6 @@ The prototype includes:
 - [UX Flow and Product Structure](docs/ux-flow.md)
 - [Technical Stack](docs/technical-stack.md)
 - [Pricing Strategy](docs/pricing-strategy.md)
+- [Asset Processing and Preview Storage](docs/asset-processing.md)
 - [Codex Prototype Prompt](docs/codex-prototype-prompt.md)
 - [Agent Instructions](AGENTS.md)

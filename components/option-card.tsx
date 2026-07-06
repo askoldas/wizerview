@@ -47,7 +47,7 @@ export function OptionCard({ option, comments, onAddComment, onSelectOption, onO
             </div>
             <div className="relative overflow-hidden rounded-2xl border border-stone-200 bg-stone-50">
               <AssetSurface asset={asset} />
-              <PinCommentLayer asset={asset} comments={comments} onAddComment={onAddComment} />
+              <PinCommentLayer asset={asset} comments={comments} onAddComment={onAddComment} activeCommentId={null} onSelectComment={() => {}} />
             </div>
           </div>
         ))}

@@ -1,4 +1,4 @@
-export type SectionType = 'review-together' | 'compare-options';
+import type { AssetProcessingStatus } from '@/lib/asset-processing';
 
 export interface Asset {
   id: string;
@@ -7,6 +7,19 @@ export interface Asset {
   description: string;
   accent: string;
   notes: string;
+  originalName?: string;
+  originalMimeType?: string;
+  originalBytes?: number;
+  previewUrl?: string;
+  thumbnailUrl?: string;
+  previewMimeType?: 'image/webp' | 'image/jpeg' | 'image/png';
+  previewBytes?: number;
+  width?: number;
+  height?: number;
+  pageNumber?: number;
+  pageCount?: number;
+  status?: AssetProcessingStatus;
+  storageHint?: string;
 }
 
 export interface Comment {
@@ -18,18 +31,11 @@ export interface Comment {
   author: string;
 }
 
-export interface ReviewSection {
+export interface ReviewOption {
   id: string;
-  type: SectionType;
   title: string;
-  intro: string;
-  assets?: Asset[];
-  options?: Array<{
-    id: string;
-    title: string;
-    description: string;
-    assets: Asset[];
-  }>;
+  description: string;
+  assets: Asset[];
 }
 
 export interface ShareSettings {
@@ -45,9 +51,7 @@ export interface ReviewData {
   client: string;
   instructions: string;
   shareSettings: ShareSettings;
-  sections: ReviewSection[];
-  sectionFeedback: Record<string, string>;
-  optionFeedback: Record<string, string>;
+  options: ReviewOption[];
   overallFeedback: string;
   decision: string;
   selectedDirection: string | null;
@@ -65,73 +69,66 @@ export const initialReview: ReviewData = {
     allowComments: true,
     allowDecisions: true,
   },
-  sections: [
+  options: [
     {
-      id: 'section-1',
-      type: 'compare-options',
-      title: 'Compare homepage directions',
-      intro: 'Choose the strongest direction for the next release.',
-      options: [
-        {
-          id: 'option-a',
-          title: 'Calm editorial homepage',
-          description: 'Quiet, premium, and highly editorial.',
-          assets: [
-            { id: 'a-desktop', title: 'Desktop preview', kind: 'screenshot', description: 'Editorial hero with soft contrast', accent: 'from-stone-700 via-stone-500 to-stone-300', notes: 'Balanced layout with lots of whitespace.' },
-            { id: 'a-mobile', title: 'Mobile preview', kind: 'screenshot', description: 'Overview card stack with gentle motion', accent: 'from-stone-800 via-stone-600 to-stone-400', notes: 'A simple, calm flow.' },
-          ],
-        },
-        {
-          id: 'option-b',
-          title: 'Bold conversion homepage',
-          description: 'Readable, punchy, and product-led.',
-          assets: [
-            { id: 'b-desktop', title: 'Desktop preview', kind: 'screenshot', description: 'Conversion-focused hero and feature grid', accent: 'from-orange-700 via-amber-500 to-orange-300', notes: 'The call to action is more prominent.' },
-            { id: 'b-mobile', title: 'Mobile preview', kind: 'screenshot', description: 'Sticky CTA and concise proof points', accent: 'from-amber-800 via-orange-600 to-orange-400', notes: 'Good for mobile adoption.' },
-          ],
-        },
-        {
-          id: 'option-c',
-          title: 'Minimal premium homepage',
-          description: 'Refined, confident, and understated.',
-          assets: [
-            { id: 'c-desktop', title: 'Desktop preview', kind: 'screenshot', description: 'Minimal hero with polished typography', accent: 'from-neutral-700 via-zinc-500 to-zinc-300', notes: 'Feels premium but may be too quiet.' },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'section-2',
-      type: 'review-together',
-      title: 'Brand lockups',
-      intro: 'Review the logo directions as a set before finalizing the homepage mood.',
+      id: 'main-option',
+      title: 'Main option',
+      description: 'A calm, premium homepage concept for the launch.',
       assets: [
-        { id: 'logo-h', title: 'Logo horizontal', kind: 'image', description: 'A wide lockup for the header', accent: 'from-slate-800 via-slate-600 to-slate-300', notes: 'Works well in product marketing contexts.' },
-        { id: 'logo-s', title: 'Logo square', kind: 'image', description: 'A compact square version for app surfaces', accent: 'from-stone-800 via-stone-600 to-stone-400', notes: 'Feels clear and modern.' },
-        { id: 'favicon', title: 'Favicon preview', kind: 'pdf', description: 'Icon treatment for browser tabs', accent: 'from-slate-700 via-slate-500 to-slate-200', notes: 'The negative space needs a little more balance.' },
+        {
+          id: 'desktop-home',
+          title: 'Homepage desktop',
+          kind: 'screenshot',
+          description: 'A polished desktop hero with rich whitespace and a clear CTA.',
+          accent: 'from-stone-800 via-stone-600 to-stone-300',
+          notes: 'The hierarchy feels calm and premium.',
+        },
+        {
+          id: 'mobile-home',
+          title: 'Homepage mobile',
+          kind: 'screenshot',
+          description: 'A compact mobile experience with a stronger proof stack.',
+          accent: 'from-stone-700 via-orange-200 to-stone-100',
+          notes: 'Good rhythm and strong product storytelling.',
+        },
+        {
+          id: 'logo-h',
+          title: 'Logo horizontal',
+          kind: 'image',
+          description: 'A wide lockup for the header and hero area.',
+          accent: 'from-slate-800 via-slate-600 to-slate-300',
+          notes: 'The spacing feels balanced.',
+        },
+        {
+          id: 'pdf-preview',
+          title: 'Brand page preview',
+          kind: 'pdf',
+          description: 'A faux PDF page set for the supporting brand story.',
+          accent: 'from-slate-700 via-slate-500 to-slate-200',
+          notes: 'The page flow is easy to skim.',
+        },
       ],
     },
   ],
-  sectionFeedback: {
-    'section-1': '',
-    'section-2': '',
-  },
-  optionFeedback: {
-    'option-a': '',
-    'option-b': '',
-    'option-c': '',
-  },
   overallFeedback: '',
   decision: '',
   selectedDirection: null,
   comments: [
     {
       id: 'comment-1',
-      assetId: 'b-desktop',
+      assetId: 'desktop-home',
       x: 28,
       y: 36,
-      text: 'The benefit stack feels strong here.',
+      text: 'The hero section feels confident without being loud.',
       author: 'Mina',
+    },
+    {
+      id: 'comment-2',
+      assetId: 'pdf-preview',
+      x: 42,
+      y: 54,
+      text: 'The supporting page feels a little too dense.',
+      author: 'Jules',
     },
   ],
 };
