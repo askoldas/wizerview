@@ -31,6 +31,23 @@ The first prototype should focus on:
 
 Text assets, live website embedding, automatic URL screenshots, billing, teams, integrations, AI, and advanced version comparison are not part of the first prototype.
 
+## Prototype Run Guide
+
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Start the development server:
+   ```bash
+   npm run dev
+   ```
+3. Open http://localhost:3000
+
+The prototype includes:
+- a dashboard of recent reviews
+- a review builder with share settings and section creation
+- a client-facing review experience with pinned comments, feedback, and decision actions
+
 ## Documentation
 
 - [Product Brief](docs/product-brief.md)
