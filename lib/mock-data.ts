@@ -14,6 +14,8 @@ export interface Asset {
   thumbnailUrl?: string;
   previewMimeType?: 'image/webp' | 'image/jpeg' | 'image/png';
   previewBytes?: number;
+  storagePath?: string;
+  thumbnailStoragePath?: string;
   width?: number;
   height?: number;
   pageNumber?: number;
@@ -36,6 +38,7 @@ export interface ReviewOption {
   title: string;
   description: string;
   assets: Asset[];
+  feedback?: string;
 }
 
 export interface ShareSettings {
@@ -71,8 +74,8 @@ export const initialReview: ReviewData = {
   },
   options: [
     {
-      id: 'main-option',
-      title: 'Main option',
+      id: 'option-a',
+      title: 'Option A',
       description: 'A calm, premium homepage concept for the launch.',
       assets: [
         {
@@ -119,7 +122,7 @@ export const initialReview: ReviewData = {
       assetId: 'desktop-home',
       x: 28,
       y: 36,
-      text: 'The hero section feels confident without being loud.',
+      text: 'The hero area feels confident without being loud.',
       author: 'Mina',
     },
     {
@@ -133,29 +136,35 @@ export const initialReview: ReviewData = {
   ],
 };
 
-export const mockReviewSummaries = [
-  {
-    id: initialReview.id,
-    title: initialReview.title,
-    client: initialReview.client,
-    status: 'In review',
-    updatedAt: '2h ago',
-    comments: initialReview.comments.length,
-  },
-  {
-    id: '2',
-    title: 'Launch email suite',
-    client: 'Northwind Labs',
-    status: 'Draft',
-    updatedAt: 'Yesterday',
-    comments: 4,
-  },
-  {
-    id: '3',
-    title: 'Product update visuals',
-    client: 'River & Oak',
-    status: 'Approved',
-    updatedAt: '3 days ago',
-    comments: 1,
-  },
-];
+type LegacySection = {
+  options?: ReviewOption[];
+};
+
+type LegacyReviewData = Omit<ReviewData, 'options'> & {
+  options?: ReviewOption[];
+  sections?: LegacySection[];
+};
+
+export function getReviewOptions(review: ReviewData | LegacyReviewData): ReviewOption[] {
+  if ('options' in review && Array.isArray(review.options)) {
+    return review.options;
+  }
+
+  if ('sections' in review && Array.isArray(review.sections)) {
+    return review.sections.flatMap((section) => section.options ?? []);
+  }
+
+  return [];
+}
+
+export function normalizeReviewData(review: ReviewData | LegacyReviewData): ReviewData {
+  const normalized = review as LegacyReviewData;
+  return {
+    ...normalized,
+    options: getReviewOptions(review),
+    comments: normalized.comments ?? [],
+    overallFeedback: normalized.overallFeedback ?? '',
+    decision: normalized.decision ?? '',
+    selectedDirection: normalized.selectedDirection ?? null,
+  };
+}

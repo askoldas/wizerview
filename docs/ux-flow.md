@@ -2,19 +2,20 @@
 
 ## Core Object Model
 
-WizerView is built around shareable reviews.
+WizerView is built around shareable visual reviews.
 
 ```text
 Creator
   -> Project
     -> Review
-      -> Section
-        -> Option
-          -> Asset
-            -> Pin Comment
-      -> General Feedback
+      -> Option
+        -> Asset
+          -> Pin Comment
+      -> Overall Feedback
       -> Decision
 ```
+
+The asset preview is the center of the product. Options, controls, comments, and decisions exist around the asset.
 
 ## Object Definitions
 
@@ -38,48 +39,28 @@ Examples:
 - Social campaign review
 - Final website screenshots
 
-### Section
+### Option
 
-A review can contain one or more sections.
+Every review has at least one option.
 
-Section types:
+If there is no comparison, the review simply has one option with related assets.
 
-1. `Review Together`
-2. `Compare Options`
+If the creator adds Option B or Option C, the review becomes a comparison.
 
-### Review Together Section
+Examples:
 
-Use when multiple assets belong to one direction or deliverable.
-
-Example:
-
-- logo horizontal
-- logo vertical
-- square icon
-- favicon
-
-The reviewer does not choose between these assets. They review them as one set.
-
-### Compare Options Section
-
-Use when the client should compare directions and choose a preference.
-
-Example:
-
-- Option A: minimal homepage
-- Option B: premium editorial homepage
-- Option C: bold sales homepage
-
-Each option can contain one or more assets.
-
-Example:
-
-- Option A
-  - desktop screenshot
-  - mobile screenshot
-- Option B
-  - desktop screenshot
-  - mobile screenshot
+- Logo review without comparison:
+  - Main option
+    - horizontal logo
+    - square logo
+    - favicon
+- Homepage direction comparison:
+  - Option A
+    - desktop screenshot
+    - mobile screenshot
+  - Option B
+    - desktop screenshot
+    - mobile screenshot
 
 ### Asset
 
@@ -90,6 +71,8 @@ MVP asset types:
 - image
 - screenshot
 - PDF page set
+
+Related assets belong inside the same option.
 
 ### Pin Comment
 
@@ -112,11 +95,10 @@ For PDFs:
 
 ### General Feedback
 
-General feedback can exist at several levels:
+General feedback can exist at:
 
-- option-level feedback
-- section-level feedback
-- review-level overall feedback
+- option level
+- review level
 
 ### Decision
 
@@ -135,39 +117,36 @@ Possible decisions:
 
 The creator starts with `New Review`, not `New Project`.
 
-Fields:
+Default screen:
 
 - review title
-- optional project/client folder
+- optional project/client name
 - short instructions
+- one default option
+- large empty asset canvas with upload CTA
 
-Examples:
+The creator should see the asset canvas before any structural choices.
 
-- "Please choose preferred homepage direction."
-- "Please review the logo package and leave notes."
-- "Please check this brochure before print."
+### 2. Add Assets
 
-### 2. Add Sections
+The creator uploads an image, screenshot, or PDF.
 
-The creator adds one or more sections.
+The asset appears large in the center of the builder.
 
-Section choices:
+The creator can add related assets inside the same option:
 
-- Review Together
-- Compare Options
+- desktop screenshot
+- mobile screenshot
+- logo
+- PDF page set
 
-### 3. Add Assets
+### 3. Add Comparison Options
 
-For `Review Together`:
+If the client should compare directions, the creator clicks `Add comparison option`.
 
-- upload one or more assets into the section
-- assets display in a natural stacked flow
+Then Option B / Option C appear near the asset canvas.
 
-For `Compare Options`:
-
-- create Option A/B/C
-- upload one or more assets inside each option
-- add optional option title/description
+Adding another option is what makes a review a comparison.
 
 ### 4. Share Settings
 
@@ -192,29 +171,27 @@ Reviewer can view the review without account registration.
 
 If PIN protection is enabled, show PIN modal first.
 
-### 2. Enter Name
+### 2. Review Assets
 
-Reviewer name is required before first comment, preference, or final decision.
+The page shows:
 
-Name is for attribution. It is not an account.
+- compact review title and instructions
+- option switcher close to the asset
+- large asset preview
+- related asset tabs or thumbnails close to the asset
+- comment list for the current asset
+- one clear decision area
 
-### 3. Review Assets
+### 3. Enter Name When Acting
 
-The page displays sections in order.
+Reviewer name is required only when the reviewer tries to:
 
-For `Review Together`:
+- add a pin/comment
+- write feedback
+- prefer/select an option
+- approve/request changes
 
-- assets are stacked in a natural flow
-- each visual asset supports pinned comments
-- section feedback appears after the assets
-
-For `Compare Options`:
-
-- desktop can show simple image options side-by-side when practical
-- large assets, PDFs, or multi-asset options should use tabs/cards
-- mobile should always use tabs or segmented controls
-- each option supports pinned comments and option-level feedback
-- reviewer can mark preference or select direction
+Name is collected once and reused.
 
 ### 4. Add Pin Comments
 
@@ -226,7 +203,7 @@ Comment behavior:
 - create pin
 - open comment input
 - save comment
-- show comment in list/drawer
+- show comment in list/panel
 - clicking comment highlights pin
 
 MVP pin tools:
@@ -242,24 +219,23 @@ MVP pin tools:
 Reviewer can write:
 
 - option feedback
-- section feedback
 - overall review feedback
-
-This supports comments like:
-
-- "I prefer Option B, but use the heading style from A."
-- "The logo set is good, but the favicon feels too detailed."
 
 ### 6. Final Decision
 
-End-of-review actions:
+For a one-option review:
 
 - Approve
 - Request changes
-- Select direction
-- Suggest combining options
 
-For compare sections, the reviewer should be able to select a preferred option without being forced to approve the entire review.
+For a comparison review:
+
+- Prefer this option
+- Select the active option as the direction
+- Suggest combining options
+- Request changes
+
+If the reviewer selects a direction, the UI must clearly show which option was selected.
 
 ## Review States
 
@@ -277,7 +253,7 @@ Recommended MVP states:
 MVP rule:
 
 - comments are visible to everyone with the review link
-- creator can resolve/reopen comments
+- creator can resolve/reopen comments later
 - internal/private comments are not part of v1
 
 ## Read-Only States

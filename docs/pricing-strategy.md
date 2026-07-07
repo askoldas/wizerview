@@ -43,7 +43,7 @@ Suggested limits:
 - 1 creator user
 - 1 active project
 - 1 active review link
-- up to 3 options per compare section
+- up to 3 comparison options per review
 - image/screenshot review
 - PDF review
 - pinned comments

@@ -8,13 +8,13 @@ interface FeedbackPanelProps {
 
 export function FeedbackPanel({ label, value, onChange }: FeedbackPanelProps) {
   return (
-    <div className="rounded-2xl border border-stone-200 bg-stone-50 p-4">
-      <label className="text-sm font-semibold text-stone-800">{label}</label>
+    <div className="rounded-[12px] border border-stone-200 bg-stone-50 p-3">
+      <label className="text-sm font-semibold text-stone-900">{label}</label>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder="Add thoughtful comments here"
-        className="mt-3 min-h-24 w-full rounded-2xl border border-stone-200 bg-white px-3 py-3 text-sm outline-none"
+        className="mt-3 min-h-24 w-full rounded-[10px] border border-stone-200 bg-white px-3 py-3 text-sm"
       />
     </div>
   );

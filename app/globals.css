@@ -7,10 +7,24 @@
 }
 
 body {
-  @apply min-h-screen bg-stone-100 text-stone-900 antialiased;
+  @apply min-h-screen bg-[#f5f3ee] text-stone-950 antialiased;
   font-family: Arial, Helvetica, sans-serif;
 }
 
 ::selection {
   @apply bg-stone-300 text-stone-900;
+}
+
+button,
+a,
+input,
+textarea {
+  @apply outline-none;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  @apply ring-2 ring-stone-900 ring-offset-2 ring-offset-[#f5f3ee];
 }

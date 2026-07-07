@@ -1,6 +1,5 @@
-import { ReviewBuilder } from '@/components/review-builder';
-import { initialReview } from '@/lib/mock-data';
+import { redirect } from 'next/navigation';
 
-export default function ReviewBuilderPage() {
-  return <ReviewBuilder initialReview={initialReview} />;
+export default function ReviewBuilderIndexPage() {
+  redirect('/');
 }
