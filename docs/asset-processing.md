@@ -100,20 +100,21 @@ The product UI should surface these states:
 
 ## Prototype Implementation Notes
 
-The current prototype uses local/mock state and preview stubs.
+The current prototype uses local/mock state for the first pass, but image uploads now compress in the browser and can push optimized WebP previews directly to Supabase Storage when configured.
 
 - The builder now supports uploading image or PDF assets.
-- Processing is mocked in the browser with structured preview metadata.
+- Images are compressed client-side for the MVP and uploaded as optimized WebP previews.
+- PDF handling remains mocked for the prototype and is intentionally deferred to a later worker-based pipeline for rendering, retries, and large-file processing.
 - The app treats assets as processed review previews, not original files.
 - The model stores preview URLs, dimensions, and size metadata without persisting the original upload.
 
-## Future Supabase Storage Flow
+## MVP Supabase Storage Flow
 
-When Supabase Storage is added later:
-- upload temporary original to a protected temp bucket or server action
-- process the file server-side or in a worker
-- upload optimized previews to a review-previews bucket
-- delete the temporary original
-- save preview metadata in Postgres
+For images in the MVP:
+- compress and resize the image in the browser
+- generate an optimized WebP preview and WebP thumbnail
+- upload only those optimized previews to the `review-previews` bucket
+- store preview metadata and storage paths in the review data
+- never upload the original image as a durable stored asset
 
-Supabase Storage can host the previews, but WizerView should store optimized review previews rather than originals.
+Worker-based processing is deferred. Use it later for PDF rendering, large files, retries, and URL screenshots.

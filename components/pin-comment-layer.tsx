@@ -38,7 +38,7 @@ export function PinCommentLayer({ asset, comments, onAddComment, activeCommentId
         .map((comment, index) => (
           <button
             key={comment.id}
-            className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white text-sm font-semibold text-white shadow-lg ${activeCommentId === comment.id ? 'bg-stone-900 ring-2 ring-stone-300' : 'bg-stone-700'}`}
+            className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white text-sm font-semibold text-white shadow-lg ${activeCommentId === comment.id ? 'bg-stone-950 ring-2 ring-amber-300' : 'bg-amber-600'}`}
             style={{ left: `${comment.x}%`, top: `${comment.y}%` }}
             onClick={(event) => {
               event.stopPropagation();
@@ -50,15 +50,15 @@ export function PinCommentLayer({ asset, comments, onAddComment, activeCommentId
         ))}
 
       {activePin ? (
-        <div className="absolute left-4 top-4 w-72 rounded-[12px] border border-stone-200 bg-white p-3 shadow-lg">
-          <p className="text-sm font-semibold text-stone-900">Add a pinned note</p>
+        <div className="absolute left-4 top-4 w-72 rounded-[12px] border border-stone-200 bg-white p-3 shadow-xl">
+          <p className="text-sm font-semibold text-stone-950">Add a pinned note</p>
           <textarea
             value={draftText}
             onChange={(event) => setDraftText(event.target.value)}
             placeholder="Leave a note about this asset"
-            className="mt-2 min-h-20 w-full rounded-[10px] border border-stone-200 px-3 py-2 text-sm outline-none"
+            className="mt-2 min-h-20 w-full rounded-[10px] border border-stone-200 px-3 py-2 text-sm"
           />
-          <button onClick={handleSave} className="mt-3 rounded-full bg-stone-900 px-3 py-2 text-sm font-medium text-white">
+          <button onClick={handleSave} className="mt-3 rounded-[10px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">
             Save note
           </button>
         </div>

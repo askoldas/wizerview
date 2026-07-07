@@ -1,48 +1,26 @@
-create table if not exists public.reviews (
-  id text primary key,
-  content jsonb not null,
-  updated_at timestamptz default now()
-);
-
-alter table public.reviews enable row level security;
-
-do $$
-begin
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public'
-      and tablename = 'reviews'
-      and policyname = 'Allow public read access'
-  ) then
-    create policy "Allow public read access" on public.reviews
-      for select using (true);
-  end if;
-
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public'
-      and tablename = 'reviews'
-      and policyname = 'Allow public write access'
-  ) then
-    create policy "Allow public write access" on public.reviews
-      for insert with check (true);
-  end if;
-
-  if not exists (
-    select 1 from pg_policies
-    where schemaname = 'public'
-      and tablename = 'reviews'
-      and policyname = 'Allow public update access'
-  ) then
-    create policy "Allow public update access" on public.reviews
-      for update using (true) with check (true);
-  end if;
-end
-$$;
-
-insert into public.reviews (id, content, updated_at)
+insert into public.reviews (
+  id,
+  title,
+  client_name,
+  instructions,
+  status,
+  reviewer_name_required,
+  pin_protection_enabled,
+  allow_comments,
+  allow_decisions,
+  content,
+  updated_at
+)
 values (
   '1',
+  'Homepage Direction',
+  'Acme Studio',
+  'Please compare the homepage directions, leave notes, and select the strongest direction.',
+  'in_review',
+  true,
+  false,
+  true,
+  true,
   '{
     "id": "1",
     "title": "Homepage Direction",
@@ -56,8 +34,8 @@ values (
     },
     "options": [
       {
-        "id": "main-option",
-        "title": "Main option",
+        "id": "option-a",
+        "title": "Option A",
         "description": "A calm, premium homepage concept for the launch.",
         "assets": [
           {
@@ -104,7 +82,7 @@ values (
         "assetId": "desktop-home",
         "x": 28,
         "y": 36,
-        "text": "The hero section feels confident without being loud.",
+        "text": "The hero area feels confident without being loud.",
         "author": "Mina"
       },
       {
@@ -120,5 +98,13 @@ values (
   now()
 )
 on conflict (id) do update
-set content = excluded.content,
+set title = excluded.title,
+    client_name = excluded.client_name,
+    instructions = excluded.instructions,
+    status = excluded.status,
+    reviewer_name_required = excluded.reviewer_name_required,
+    pin_protection_enabled = excluded.pin_protection_enabled,
+    allow_comments = excluded.allow_comments,
+    allow_decisions = excluded.allow_decisions,
+    content = excluded.content,
     updated_at = excluded.updated_at;

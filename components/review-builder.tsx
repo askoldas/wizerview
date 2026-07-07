@@ -2,21 +2,55 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import type { User } from '@supabase/supabase-js';
 import { AssetSurface } from '@/components/asset-surface';
 import { estimateStorageSavings, processImagePreview, processPdfPreview } from '@/lib/asset-processing';
 import type { Asset, ReviewData, ReviewOption, ShareSettings } from '@/lib/mock-data';
 import { loadReview, saveReview } from '@/lib/review-service';
+import { createSupabaseClientInstance, isSupabaseConfigured } from '@/lib/supabase';
 
 interface ReviewBuilderProps {
   initialReview: ReviewData;
 }
 
 export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
+  const supabase = useMemo(() => createSupabaseClientInstance(), []);
   const [review, setReview] = useState<ReviewData>(initialReview);
   const [activeOptionId, setActiveOptionId] = useState(initialReview.options[0]?.id ?? '');
   const [activeAssetId, setActiveAssetId] = useState(initialReview.options[0]?.assets[0]?.id ?? '');
   const [activePdfPage, setActivePdfPage] = useState(1);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isReviewLoaded, setIsReviewLoaded] = useState(false);
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authEmail, setAuthEmail] = useState('');
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [isSendingLogin, setIsSendingLogin] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(Boolean(supabase));
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    let ignored = false;
+    supabase.auth.getUser().then(({ data }) => {
+      if (!ignored) {
+        setAuthUser(data.user ?? null);
+        setIsCheckingAuth(false);
+      }
+    }).catch(() => {
+      if (!ignored) setIsCheckingAuth(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAuthUser(session?.user ?? null);
+    });
+
+    return () => {
+      ignored = true;
+      listener.subscription.unsubscribe();
+    };
+  }, [supabase]);
 
   useEffect(() => {
     let ignored = false;
@@ -26,6 +60,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
         const firstOption = loaded.options[0];
         setActiveOptionId(firstOption?.id ?? '');
         setActiveAssetId(firstOption?.assets[0]?.id ?? '');
+        setIsReviewLoaded(true);
       }
     });
 
@@ -35,15 +70,22 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
   }, [initialReview.id]);
 
   useEffect(() => {
+    if (!isReviewLoaded) return;
+    if (isCheckingAuth) return;
+    if (isSupabaseConfigured() && !authUser) return;
+
     const timer = window.setTimeout(() => {
-      void saveReview(review);
+      saveReview(review).catch((error) => {
+        setSaveMessage(error instanceof Error ? error.message : 'Autosave failed.');
+      });
     }, 400);
 
     return () => window.clearTimeout(timer);
-  }, [review]);
+  }, [authUser, isCheckingAuth, isReviewLoaded, review]);
 
   const activeOption = review.options.find((option) => option.id === activeOptionId) ?? review.options[0];
   const activeAsset = activeOption?.assets.find((asset) => asset.id === activeAssetId) ?? activeOption?.assets[0];
+  const isComparisonReview = review.options.length > 1;
 
   const shareSummary = useMemo(() => {
     const parts = [review.shareSettings.reviewerNameRequired ? 'name required' : 'name optional'];
@@ -62,6 +104,12 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
   const handleAssetUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (isSupabaseConfigured() && !authUser) {
+      setUploadMessage('Sign in before uploading optimized previews.');
+      event.target.value = '';
+      return;
+    }
 
     const pendingAssetId = `asset-${Date.now()}`;
     const pendingAsset: Asset = {
@@ -102,6 +150,8 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
         thumbnailUrl: processed.thumbnailUrl,
         previewMimeType: processed.previewMimeType,
         previewBytes: processed.previewBytes,
+        storagePath: processed.storagePath,
+        thumbnailStoragePath: processed.thumbnailStoragePath,
         width: processed.width,
         height: processed.height,
         pageCount: processed.pageCount,
@@ -135,7 +185,10 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
       assets: [],
     };
 
-    setReview((current) => ({ ...current, options: [...current.options, newOption] }));
+    setReview((current) => ({
+      ...current,
+      options: [...current.options, newOption],
+    }));
     setActiveOptionId(newOption.id);
     setActiveAssetId('');
   };
@@ -165,27 +218,117 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
     }));
   };
 
+  const handleSaveReview = async () => {
+    if (isSupabaseConfigured() && !authUser) {
+      setSaveMessage('Sign in to save reviews.');
+      return;
+    }
+
+    setIsSaving(true);
+    setSaveMessage(null);
+
+    try {
+      await saveReview(review);
+      setSaveMessage('Saved');
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : 'Save failed.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSendLoginLink = async () => {
+    if (!supabase) {
+      setAuthMessage('Add Supabase environment variables before signing in.');
+      return;
+    }
+
+    setIsSendingLogin(true);
+    setAuthMessage(null);
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email: authEmail,
+      options: {
+        emailRedirectTo: typeof window !== 'undefined' ? window.location.href : undefined,
+      },
+    });
+
+    if (error) {
+      setAuthMessage(error.message);
+    } else {
+      setAuthMessage('Check your email for the sign-in link.');
+    }
+
+    setIsSendingLogin(false);
+  };
+
+  const handleSignOut = async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setAuthUser(null);
+    setSaveMessage(null);
+  };
+
   return (
-    <main className="mx-auto flex min-h-screen max-w-7xl flex-col gap-5 px-5 py-6 lg:px-8">
-      <header className="rounded-[14px] border border-stone-200 bg-stone-900 px-5 py-5 text-stone-100 shadow-sm">
+    <main className="mx-auto flex min-h-screen max-w-7xl flex-col gap-5 px-5 py-6 text-stone-950 lg:px-8">
+      <header className="rounded-[14px] border border-stone-200 bg-white px-5 py-5 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-stone-400">WizerView builder</p>
-            <h1 className="mt-2 text-2xl font-semibold">{review.title}</h1>
-            <p className="mt-2 max-w-2xl text-sm text-stone-300">Start from the asset preview, keep the review lightweight, and add comparison options only when they help the reviewer.</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-stone-500">WizerView builder</p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-stone-950">{review.title}</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-600">Start with the asset preview, add related assets, and add comparison options only when the review needs them.</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link href="/" className="rounded-full border border-stone-700 px-3 py-2 text-sm font-medium text-stone-200 hover:bg-stone-800">
+            <Link href="/" className="rounded-[10px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
               Dashboard
             </Link>
-            <button className="rounded-full bg-white px-3 py-2 text-sm font-medium text-stone-900 hover:bg-stone-200">
+            <button
+              type="button"
+              onClick={handleSaveReview}
+              disabled={isSaving || isCheckingAuth || (isSupabaseConfigured() && !authUser)}
+              className="rounded-[10px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSaving ? 'Saving...' : isCheckingAuth ? 'Checking login...' : 'Save review'}
+            </button>
+            <button className="rounded-[10px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
               Copy review link
             </button>
           </div>
         </div>
+        {saveMessage ? <p className="mt-3 text-sm font-medium text-stone-600">{saveMessage}</p> : null}
+        <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-3">
+          {authUser ? (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-stone-900">Signed in</p>
+                <p className="text-sm text-stone-600">{authUser.email}</p>
+              </div>
+              <button type="button" onClick={handleSignOut} className="rounded-[10px] border border-stone-200 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-100">
+                Log out
+              </button>
+            </div>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+              <label className="block">
+                <span className="text-sm font-semibold text-stone-900">Creator login</span>
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(event) => setAuthEmail(event.target.value)}
+                  placeholder="you@example.com"
+                  className="mt-2 w-full rounded-[10px] border border-stone-200 bg-white px-3 py-2.5 text-sm"
+                />
+              </label>
+              <button type="button" onClick={handleSendLoginLink} disabled={isSendingLogin || !authEmail} className="rounded-[10px] bg-stone-950 px-3 py-2.5 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60">
+                {isSendingLogin ? 'Sending...' : 'Email sign-in link'}
+              </button>
+              {authMessage ? <p className="text-sm text-stone-600 lg:col-span-2">{authMessage}</p> : null}
+            </div>
+          )}
+        </div>
       </header>
 
-      <section className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+      <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-5">
           <div className="rounded-[14px] border border-stone-200 bg-white p-4 shadow-sm">
             <div className="flex flex-wrap gap-2">
@@ -196,28 +339,28 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
                     setActiveOptionId(option.id);
                     setActiveAssetId(option.assets[0]?.id ?? '');
                   }}
-                  className={`rounded-full px-3 py-2 text-sm font-medium ${activeOption?.id === option.id ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-700'}`}
+                  className={`rounded-[10px] px-3 py-2 text-sm font-semibold ${activeOption?.id === option.id ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}
                 >
                   {option.title}
                 </button>
               ))}
-              <button onClick={addComparisonOption} className="rounded-full border border-dashed border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50">
+              <button onClick={addComparisonOption} className="rounded-[10px] border border-dashed border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
                 + Add comparison option
               </button>
             </div>
 
-            <div className="mt-4 overflow-hidden rounded-[12px] border border-stone-200 bg-stone-50">
-              <div className="flex items-center justify-between border-b border-stone-200 px-4 py-3">
+            <div className="mt-4 overflow-hidden rounded-[12px] border border-stone-200 bg-[#f7f6f2]">
+              <div className="flex flex-col gap-3 border-b border-stone-200 bg-white px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-stone-900">Asset preview canvas</p>
                   <p className="text-sm text-stone-600">{activeOption?.description ?? 'A preview-ready surface for the reviewer.'}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <label className="cursor-pointer rounded-full bg-stone-900 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-stone-700">
+                  <label className={`rounded-[10px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-stone-800 ${isSupabaseConfigured() && !authUser ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
                     + Upload image/PDF
-                    <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="sr-only" onChange={handleAssetUpload} />
+                    <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="sr-only" onChange={handleAssetUpload} disabled={isSupabaseConfigured() && !authUser} />
                   </label>
-                  <button onClick={addRelatedAsset} className="rounded-full bg-white px-3 py-2 text-sm font-medium text-stone-700 shadow-sm hover:bg-stone-100">
+                  <button onClick={addRelatedAsset} className="rounded-[10px] border border-stone-200 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50">
                     + Add related asset
                   </button>
                 </div>
@@ -226,7 +369,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
               <div className="p-4">
                 {activeAsset ? (
                   <>
-                    <div className="mb-3 rounded-[10px] border border-stone-200 bg-stone-50 p-3 text-sm text-stone-600">
+                    <div className="mb-3 rounded-[10px] border border-stone-200 bg-white p-3 text-sm text-stone-600">
                       <p className="font-medium text-stone-900">{activeAsset.status === 'processing' ? 'Processing optimized preview' : activeAsset.status === 'ready' ? 'Optimized review preview' : 'Preview ready for review'}</p>
                       <p className="mt-1">WizerView stores optimized review previews, not original files.</p>
                       {uploadMessage ? <p className="mt-2 text-xs uppercase tracking-[0.2em] text-stone-500">{uploadMessage}</p> : null}
@@ -236,7 +379,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
                         </p>
                       ) : null}
                     </div>
-                    <div className="relative overflow-hidden rounded-[12px] border border-stone-200 bg-white p-3">
+                    <div className="relative overflow-hidden rounded-[12px] border border-stone-200 bg-white p-3 shadow-sm">
                       <AssetSurface asset={activeAsset} />
                     </div>
                     {activeAsset.kind === 'pdf' && activeAsset.pageCount ? (
@@ -245,7 +388,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
                           <button
                             key={index + 1}
                             onClick={() => setActivePdfPage(index + 1)}
-                            className={`rounded-full px-3 py-2 text-sm font-medium ${activePdfPage === index + 1 ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-700'}`}
+                            className={`rounded-[10px] px-3 py-2 text-sm font-semibold ${activePdfPage === index + 1 ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-700'}`}
                           >
                             Page {index + 1}
                           </button>
@@ -254,10 +397,10 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
                     ) : null}
                   </>
                 ) : (
-                  <div className="flex min-h-[300px] items-center justify-center rounded-[12px] border border-dashed border-stone-300 bg-white text-center">
+                  <div className="flex min-h-[360px] items-center justify-center rounded-[12px] border border-dashed border-stone-300 bg-white text-center">
                     <div className="max-w-[260px]">
                       <p className="text-sm font-semibold text-stone-900">No asset yet</p>
-                      <p className="mt-2 text-sm text-stone-600">Add a related asset and the preview canvas will become the heart of the review.</p>
+                      <p className="mt-2 text-sm text-stone-600">Upload an asset to make the canvas the heart of this review.</p>
                     </div>
                   </div>
                 )}
@@ -267,7 +410,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
                     <button
                       key={asset.id}
                       onClick={() => setActiveAssetId(asset.id)}
-                      className={`rounded-full px-3 py-2 text-sm font-medium ${activeAsset?.id === asset.id ? 'bg-stone-900 text-white' : 'bg-stone-100 text-stone-700'}`}
+                      className={`rounded-[10px] px-3 py-2 text-sm font-semibold ${activeAsset?.id === asset.id ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}
                     >
                       {asset.title}
                     </button>
@@ -284,7 +427,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
             <input
               value={review.title}
               onChange={(event) => setReview((current) => ({ ...current, title: event.target.value }))}
-              className="mt-2 w-full rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm outline-none"
+              className="mt-2 w-full rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm"
             />
 
             <div className="mt-4 grid gap-4">
@@ -293,7 +436,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
                 <input
                   value={review.client}
                   onChange={(event) => setReview((current) => ({ ...current, client: event.target.value }))}
-                  className="mt-2 w-full rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm outline-none"
+                  className="mt-2 w-full rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm"
                 />
               </div>
               <div>
@@ -301,7 +444,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
                 <textarea
                   value={review.instructions}
                   onChange={(event) => setReview((current) => ({ ...current, instructions: event.target.value }))}
-                  className="mt-2 min-h-24 w-full rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm outline-none"
+                  className="mt-2 min-h-24 w-full rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm"
                 />
               </div>
             </div>
@@ -315,6 +458,11 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
               </div>
               <span className="rounded-full bg-stone-100 px-3 py-1 text-sm text-stone-600">{activeOption?.assets.length ?? 0} assets</span>
             </div>
+            {isComparisonReview ? (
+              <p className="mt-3 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                This review is in comparison mode because it has more than one option.
+              </p>
+            ) : null}
             <div className="mt-4 space-y-2">
               {activeOption?.assets.map((asset) => (
                 <div key={asset.id} className="flex items-center justify-between rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm text-stone-700">
@@ -359,7 +507,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
               ))}
             </div>
 
-            <Link href={`/review/${review.id}`} className="mt-4 inline-flex rounded-full bg-stone-900 px-3 py-2 text-sm font-medium text-white hover:bg-stone-700">
+            <Link href={`/review/${review.id}`} className="mt-4 inline-flex rounded-[10px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
               Preview client view
             </Link>
           </div>

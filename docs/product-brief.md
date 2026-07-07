@@ -71,13 +71,13 @@ Include:
 - Creator account
 - New review flow
 - Optional project/folder organization
-- Review sections
-- `Review Together` sections for related assets
-- `Compare Options` sections for design directions
+- One default review option with a large asset canvas
+- Related assets within the same option
+- Optional comparison options when the creator adds Option B / Option C
 - Image and screenshot upload
 - PDF upload and page-based display
 - Simple pinned comments on visual assets
-- General comments at option, section, and review level
+- General comments at option and review level
 - Reviewer name required before feedback or decision
 - Optional PIN protection later
 - Review states and decision flow
@@ -120,6 +120,7 @@ WizerView should differentiate through:
 - snapshot-first review
 - visual assets and PDFs from the start
 - option/direction comparison built into the review model
+- asset-first review setup instead of section-first forms
 - no client registration
 - simple free plan for first real client review
 - less task-management complexity than agency QA tools

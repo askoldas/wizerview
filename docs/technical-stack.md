@@ -25,7 +25,7 @@ Later:
 WizerView has a naturally relational model:
 
 ```text
-users -> projects -> reviews -> sections -> options -> assets -> comments -> decisions
+users -> projects -> reviews -> options -> assets -> comments -> decisions
 ```
 
 Supabase Postgres fits this better than a document database.
@@ -109,35 +109,20 @@ Then implement in this order:
 - created_at
 - updated_at
 
-### review_sections
-
-- id
-- review_id
-- type
-- title
-- description
-- sort_order
-
-`type` values:
-
-- review_together
-- compare_options
-
 ### review_options
 
 - id
-- section_id
+- review_id
 - title
 - description
 - sort_order
 
-For `Review Together` sections, an implicit default option can be used internally.
+Every review has at least one option. A review becomes a comparison when it has more than one option.
 
 ### assets
 
 - id
 - review_id
-- section_id
 - option_id
 - type
 - title
@@ -161,7 +146,6 @@ For `Review Together` sections, an implicit default option can be used internall
 - review_id
 - asset_id
 - option_id
-- section_id
 - parent_comment_id
 - author_name
 - author_role
@@ -181,7 +165,6 @@ For `Review Together` sections, an implicit default option can be used internall
 
 - id
 - review_id
-- section_id
 - option_id
 - reviewer_name
 - type

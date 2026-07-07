@@ -15,21 +15,20 @@ Do not drift into generic project management, kanban boards, or enterprise proof
 Build around shareable reviews:
 
 ```text
-Project -> Review -> Section -> Option -> Asset -> Pin Comment -> Decision
+Project -> Review -> Option -> Asset -> Pin Comment -> Decision
 ```
 
 Projects are lightweight folders. Reviews are the main shared objects.
 
 ## Review Model
 
-A review contains sections.
+A review always starts with one option and one large asset canvas.
 
-Section types:
+If no comparison is needed, the review has one option with one or more related assets.
 
-- `Review Together`: multiple related assets reviewed as one set.
-- `Compare Options`: multiple directions/options where the reviewer may prefer or select one.
+If comparison is needed, the creator adds another option. Option B or Option C makes the review a comparison.
 
-Each option can contain multiple assets.
+Each option can contain multiple related assets.
 
 ## MVP Asset Types
 
@@ -51,7 +50,6 @@ Use:
 
 - simple pinned comments on visual assets
 - option-level feedback
-- section-level feedback
 - overall review feedback
 - final decision
 
@@ -107,6 +105,7 @@ Avoid:
 - generic purple SaaS gradients
 - excessive nested cards
 - complex sidebars before the workflow needs them
+- section-first or form-first review setup
 - marketing page as the first product screen when building the app prototype
 
 ## Documentation

@@ -1,3 +1,5 @@
+import { createSupabaseClientInstance, isSupabaseConfigured } from '@/lib/supabase';
+
 export type AssetProcessingStatus = 'idle' | 'uploading' | 'processing' | 'ready' | 'failed';
 
 export interface UploadedOriginal {
@@ -18,6 +20,8 @@ export interface ProcessedPreview {
   thumbnailUrl: string;
   previewMimeType: 'image/webp' | 'image/jpeg' | 'image/png';
   previewBytes: number;
+  storagePath?: string;
+  thumbnailStoragePath?: string;
   width: number;
   height: number;
   status: AssetProcessingStatus;
@@ -86,21 +90,112 @@ export function validatePdfFile(file: File) {
   return { valid: true };
 }
 
+function sanitizePathSegment(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'asset';
+}
+
+async function createOptimizedImageBlob(file: File, options: { maxWidth: number; maxHeight: number; quality: number; mimeType: 'image/webp' }) {
+  if (typeof window === 'undefined' || typeof createImageBitmap === 'undefined' || typeof document === 'undefined') {
+    throw new Error('Image optimization is only available in a browser.');
+  }
+
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, options.maxWidth / bitmap.width, options.maxHeight / bitmap.height);
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    bitmap.close?.();
+    throw new Error('Could not prepare an image canvas for optimization.');
+  }
+
+  context.drawImage(bitmap, 0, 0, width, height);
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, options.mimeType, options.quality));
+  bitmap.close?.();
+  if (!blob) {
+    throw new Error('Could not generate an optimized WebP preview.');
+  }
+
+  return { blob, width, height };
+}
+
+function createUploadPath(fileName: string, blob: Blob) {
+  const fileExtension = blob.type === 'image/webp' ? 'webp' : 'jpg';
+  const randomId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  return `${randomId}-${sanitizePathSegment(fileName)}.${fileExtension}`;
+}
+
+async function uploadOptimizedPreviewToSupabase(blob: Blob, fileName: string) {
+  if (!isSupabaseConfigured()) return null;
+
+  const client = createSupabaseClientInstance();
+  if (!client) return null;
+
+  const uploadPath = createUploadPath(fileName, blob);
+  const uploadFile = new File([blob], uploadPath, { type: blob.type });
+
+  const { error } = await client.storage.from('review-previews').upload(uploadPath, uploadFile, {
+    cacheControl: '3600',
+    upsert: true,
+    contentType: uploadFile.type,
+  });
+
+  if (error) {
+    throw new Error(`Supabase preview upload failed: ${error.message}`);
+  }
+
+  const { data } = client.storage.from('review-previews').getPublicUrl(uploadPath);
+  return { url: data.publicUrl, path: uploadPath };
+}
+
 export async function processImagePreview(file: File): Promise<ProcessedPreview> {
   const validation = validateImageFile(file);
   if (!validation.valid) throw new Error(validation.reason);
 
-  await new Promise((resolve) => setTimeout(resolve, 700));
+  const previewResult = await createOptimizedImageBlob(file, {
+    maxWidth: PREVIEW_WIDTH,
+    maxHeight: 4000,
+    quality: 0.82,
+    mimeType: 'image/webp',
+  });
+
+  const thumbnailResult = await createOptimizedImageBlob(file, {
+    maxWidth: THUMBNAIL_WIDTH,
+    maxHeight: 2000,
+    quality: 0.68,
+    mimeType: 'image/webp',
+  });
+
+  const previewBlob = previewResult.blob;
+  const thumbnailBlob = thumbnailResult.blob;
 
   const previewUrl = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function'
-    ? URL.createObjectURL(file)
+    ? URL.createObjectURL(previewBlob)
     : createPlaceholderUrl(file.name, 'preview');
 
-  const thumbnailUrl = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function'
-    ? URL.createObjectURL(file)
-    : createPlaceholderUrl(file.name, 'thumb');
+  const uploadedPreview = await uploadOptimizedPreviewToSupabase(previewBlob, file.name);
+  const uploadedThumbnail = await uploadOptimizedPreviewToSupabase(thumbnailBlob, `${file.name}-thumb`);
 
-  const previewBytes = Math.max(160_000, Math.round(file.size * 0.16));
+  const resolvedPreviewUrl = uploadedPreview?.url ?? previewUrl;
+  const resolvedThumbnailUrl = uploadedThumbnail?.url ?? (typeof window !== 'undefined' && typeof URL.createObjectURL === 'function'
+    ? URL.createObjectURL(thumbnailBlob)
+    : createPlaceholderUrl(file.name, 'thumb'));
+
+  const previewBytes = previewBlob.size;
+  const width = previewResult?.width ?? PREVIEW_WIDTH;
+  const height = previewResult?.height ?? 900;
 
   return {
     id: `preview-${Date.now()}`,
@@ -108,14 +203,16 @@ export async function processImagePreview(file: File): Promise<ProcessedPreview>
     originalName: file.name,
     originalMimeType: file.type,
     originalBytes: file.size,
-    previewUrl,
-    thumbnailUrl,
+    previewUrl: resolvedPreviewUrl,
+    thumbnailUrl: resolvedThumbnailUrl,
     previewMimeType: 'image/webp',
     previewBytes,
-    width: PREVIEW_WIDTH,
-    height: 900,
+    storagePath: uploadedPreview?.path,
+    thumbnailStoragePath: uploadedThumbnail?.path,
+    width,
+    height,
     status: 'ready',
-    storageHint: `WebP preview generated for review.`,
+    storageHint: uploadedPreview ? 'Optimized preview uploaded directly to Supabase Storage.' : 'Optimized preview generated locally for the MVP prototype.',
   };
 }
 
