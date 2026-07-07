@@ -6,7 +6,7 @@ import type { User } from '@supabase/supabase-js';
 import { AssetSurface } from '@/components/asset-surface';
 import { estimateStorageSavings, processImagePreview, processPdfPreview } from '@/lib/asset-processing';
 import type { Asset, ReviewData, ReviewOption, ShareSettings } from '@/lib/mock-data';
-import { loadReview, saveReview } from '@/lib/review-service';
+import { loadReview, markReviewSeen, saveReview } from '@/lib/review-service';
 import { createSupabaseClientInstance, isSupabaseConfigured } from '@/lib/supabase';
 
 interface ReviewBuilderProps {
@@ -28,6 +28,7 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [isSendingLogin, setIsSendingLogin] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(Boolean(supabase));
+  const [hasMarkedSeen, setHasMarkedSeen] = useState(false);
 
   useEffect(() => {
     if (!supabase) return;
@@ -82,6 +83,15 @@ export function ReviewBuilder({ initialReview }: ReviewBuilderProps) {
 
     return () => window.clearTimeout(timer);
   }, [authUser, isCheckingAuth, isReviewLoaded, review]);
+
+  useEffect(() => {
+    if (!isReviewLoaded || !authUser || hasMarkedSeen) return;
+
+    setHasMarkedSeen(true);
+    markReviewSeen(review.id).catch((error) => {
+      setSaveMessage(error instanceof Error ? error.message : 'Could not mark review as seen.');
+    });
+  }, [authUser, hasMarkedSeen, isReviewLoaded, review.id]);
 
   const activeOption = review.options.find((option) => option.id === activeOptionId) ?? review.options[0];
   const activeAsset = activeOption?.assets.find((asset) => asset.id === activeAssetId) ?? activeOption?.assets[0];

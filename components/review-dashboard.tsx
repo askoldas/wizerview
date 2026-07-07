@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { CreatorAuthPanel } from '@/components/creator-auth-panel';
-import { createReview, listReviews, type ReviewSummary } from '@/lib/review-service';
+import { createReview, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
 import { createSupabaseClientInstance } from '@/lib/supabase';
 
 export function ReviewDashboard() {
@@ -89,9 +89,38 @@ export function ReviewDashboard() {
     }
   };
 
+  const handleEditReview = async (reviewId: string) => {
+    setMessage(null);
+
+    try {
+      await markReviewSeen(reviewId);
+      setReviews((current) =>
+        current.map((review) =>
+          review.id === reviewId
+            ? {
+                ...review,
+                newComments: 0,
+                newFeedback: 0,
+                newActivity: 0,
+              }
+            : review
+        )
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not mark review as seen.');
+    }
+
+    router.push(`/review-builder/${reviewId}`);
+  };
+
   const activeReviews = reviews.filter((review) => review.status !== 'Approved').length;
-  const commentCount = reviews.reduce((total, review) => total + review.comments, 0);
+  const activityCount = reviews.reduce((total, review) => total + review.totalActivity, 0);
   const firstReviewId = reviews[0]?.id;
+
+  const activityLabel = (total: number, unseen: number, singular: string) => {
+    const label = total === 1 ? singular : `${singular}s`;
+    return unseen > 0 ? `${total} ${label} / ${unseen} new` : `${total} ${label}`;
+  };
 
   return (
     <main className="min-h-screen px-5 py-6 text-stone-950 lg:px-8">
@@ -174,11 +203,16 @@ export function ReviewDashboard() {
                         <p className="mt-1 text-sm text-stone-600">{review.client || 'No client yet'}</p>
                         <p className="mt-2 text-xs uppercase tracking-[0.18em] text-stone-400">Updated {review.updatedAt}</p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-[10px] bg-stone-100 px-3 py-2 text-sm text-stone-600">{review.comments} comments</span>
-                        <Link href={`/review-builder/${review.id}`} className="rounded-[10px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-50">
+                      <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
+                        <span className={`rounded-[10px] px-3 py-2 text-sm ${review.newComments > 0 ? 'bg-amber-100 text-amber-900' : 'bg-stone-100 text-stone-600'}`}>
+                          {activityLabel(review.comments, review.newComments, 'comment')}
+                        </span>
+                        <span className={`rounded-[10px] px-3 py-2 text-sm ${review.newFeedback > 0 ? 'bg-amber-100 text-amber-900' : 'bg-stone-100 text-stone-600'}`}>
+                          {activityLabel(review.feedback, review.newFeedback, 'feedback')}
+                        </span>
+                        <button type="button" onClick={() => void handleEditReview(review.id)} className="rounded-[10px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-50">
                           Edit
-                        </Link>
+                        </button>
                         <Link href={`/review/${review.id}`} className="rounded-[10px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-50">
                           Open
                         </Link>
@@ -200,8 +234,8 @@ export function ReviewDashboard() {
                     <p className="mt-1 text-sm text-stone-400">active links</p>
                   </div>
                   <div>
-                    <p className="text-3xl font-semibold">{commentCount}</p>
-                    <p className="mt-1 text-sm text-stone-400">comments</p>
+                    <p className="text-3xl font-semibold">{activityCount}</p>
+                    <p className="mt-1 text-sm text-stone-400">review events</p>
                   </div>
                 </div>
                 {firstReviewId ? (

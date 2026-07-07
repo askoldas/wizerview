@@ -5,6 +5,8 @@ const REVIEW_TABLE = 'reviews';
 const COMMENT_TABLE = 'comments';
 const OPTION_TABLE = 'review_options';
 const ASSET_TABLE = 'assets';
+const DECISION_TABLE = 'decisions';
+const FEEDBACK_TABLE = 'review_feedback';
 
 export interface ReviewSummary {
   id: string;
@@ -13,6 +15,32 @@ export interface ReviewSummary {
   status: string;
   updatedAt: string;
   comments: number;
+  newComments: number;
+  feedback: number;
+  newFeedback: number;
+  totalActivity: number;
+  newActivity: number;
+}
+
+export type ReviewerDecisionType = 'approved' | 'changes_requested' | 'direction_selected' | 'combine_options';
+
+export interface ReviewerDecisionInput {
+  reviewId: string;
+  optionId?: string | null;
+  reviewerName: string;
+  type: ReviewerDecisionType;
+  note: string;
+}
+
+export interface ReviewerFeedbackInput {
+  reviewId: string;
+  reviewerName: string;
+  body: string;
+}
+
+interface ActivityRow {
+  review_id: string;
+  created_at: string | null;
 }
 
 export function createEmptyReviewData(reviewId: string): ReviewData {
@@ -84,6 +112,20 @@ function formatStatus(status: string | null) {
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function isNewerThanSeen(createdAt: string | null, creatorSeenAt: string | null) {
+  if (!createdAt) return false;
+  if (!creatorSeenAt) return true;
+  return new Date(createdAt).getTime() > new Date(creatorSeenAt).getTime();
+}
+
+function countActivityByReview<T extends { review_id: string; created_at: string | null }>(rows: T[] | null, reviewId: string, creatorSeenAt: string | null) {
+  const matchingRows = (rows ?? []).filter((row) => row.review_id === reviewId);
+  return {
+    total: matchingRows.length,
+    new: matchingRows.filter((row) => isNewerThanSeen(row.created_at, creatorSeenAt)).length,
+  };
 }
 
 async function syncReviewRows(review: ReviewData) {
@@ -179,9 +221,36 @@ export async function loadReview(reviewId: string): Promise<ReviewData> {
       author: comment.author_name,
     }));
 
+    const { data: feedbackRows, error: feedbackError } = await client
+      .from(FEEDBACK_TABLE)
+      .select('body')
+      .eq('review_id', reviewId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (feedbackError) {
+      console.error('Failed to load review feedback from Supabase:', feedbackError.message);
+    }
+
+    const { data: decisionRows, error: decisionError } = await client
+      .from(DECISION_TABLE)
+      .select('type, note, option_id')
+      .eq('review_id', reviewId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (decisionError) {
+      console.error('Failed to load review decisions from Supabase:', decisionError.message);
+    }
+
+    const latestDecision = decisionRows?.[0];
+
     return {
       ...review,
       comments: mergeComments(review.comments, tableComments),
+      overallFeedback: feedbackRows?.[0]?.body ?? review.overallFeedback,
+      decision: latestDecision?.note ?? review.decision,
+      selectedDirection: latestDecision?.option_id ?? review.selectedDirection,
     };
   }
 
@@ -230,22 +299,50 @@ export async function listReviews(): Promise<ReviewSummary[]> {
 
   const { data, error } = await client
     .from(REVIEW_TABLE)
-    .select('id, title, client_name, status, updated_at, content')
+    .select('id, title, client_name, status, updated_at, creator_seen_at, content')
     .order('updated_at', { ascending: false });
 
   if (error) {
     throw new Error(`Failed to load reviews: ${error.message}`);
   }
 
+  const reviewIds = (data ?? []).map((row) => row.id);
+  const emptyActivityResult: { data: ActivityRow[]; error: null } = { data: [], error: null };
+  const [commentsResult, feedbackResult] = reviewIds.length > 0
+    ? await Promise.all([
+        client.from(COMMENT_TABLE).select('review_id, created_at').in('review_id', reviewIds),
+        client.from(FEEDBACK_TABLE).select('review_id, created_at').in('review_id', reviewIds),
+      ])
+    : [
+        emptyActivityResult,
+        emptyActivityResult,
+      ];
+
+  if (commentsResult.error) {
+    throw new Error(`Failed to load comment activity: ${commentsResult.error.message}`);
+  }
+
+  if (feedbackResult.error) {
+    throw new Error(`Failed to load feedback activity: ${feedbackResult.error.message}`);
+  }
+
   return (data ?? []).map((row) => {
     const content = normalizeReviewData((row.content ?? createEmptyReviewData(row.id)) as ReviewData);
+    const comments = countActivityByReview(commentsResult.data, row.id, row.creator_seen_at);
+    const feedback = countActivityByReview(feedbackResult.data, row.id, row.creator_seen_at);
+
     return {
       id: row.id,
       title: row.title ?? content.title,
       client: row.client_name ?? content.client,
       status: formatStatus(row.status),
       updatedAt: formatUpdatedAt(row.updated_at),
-      comments: content.comments.length,
+      comments: comments.total,
+      newComments: comments.new,
+      feedback: feedback.total,
+      newFeedback: feedback.new,
+      totalActivity: comments.total + feedback.total,
+      newActivity: comments.new + feedback.new,
     };
   });
 }
@@ -283,6 +380,7 @@ export async function createReview(): Promise<ReviewData> {
     allow_comments: review.shareSettings.allowComments,
     allow_decisions: review.shareSettings.allowDecisions,
     content: review,
+    creator_seen_at: now,
     updated_at: now,
   });
 
@@ -292,6 +390,38 @@ export async function createReview(): Promise<ReviewData> {
 
   await syncReviewRows(review);
   return review;
+}
+
+export async function markReviewSeen(reviewId: string): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    return;
+  }
+
+  const client = createSupabaseClientInstance();
+  if (!client) {
+    return;
+  }
+
+  const { data: userData, error: userError } = await client.auth.getUser();
+  if (userError || !userData.user) {
+    return;
+  }
+
+  const { data, error } = await client
+    .from(REVIEW_TABLE)
+    .update({ creator_seen_at: new Date().toISOString() })
+    .eq('id', reviewId)
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    console.error('Failed to mark review activity as seen:', error.message);
+    throw new Error(`Failed to mark review as seen: ${error.message}`);
+  }
+
+  if (!data) {
+    throw new Error('Failed to mark review as seen: no review row was updated.');
+  }
 }
 
 export async function saveReview(review: ReviewData): Promise<void> {
@@ -342,8 +472,6 @@ export async function saveComment(review: ReviewData, comment: Comment): Promise
     return;
   }
 
-  await syncReviewRows(review);
-
   const optionId = findOptionIdForAsset(review, comment.assetId);
   const { error } = await client.from(COMMENT_TABLE).upsert({
     id: comment.id,
@@ -360,5 +488,62 @@ export async function saveComment(review: ReviewData, comment: Comment): Promise
 
   if (error) {
     console.error('Failed to save comment to Supabase:', error.message);
+    throw new Error(`Failed to save comment: ${error.message}`);
+  }
+}
+
+export async function saveReviewerFeedback(input: ReviewerFeedbackInput): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    return;
+  }
+
+  const client = createSupabaseClientInstance();
+  if (!client) {
+    return;
+  }
+
+  const feedbackId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `feedback-${Date.now()}`;
+
+  const { error } = await client.from(FEEDBACK_TABLE).insert({
+    id: feedbackId,
+    review_id: input.reviewId,
+    reviewer_name: input.reviewerName,
+    body: input.body,
+  });
+
+  if (error) {
+    console.error('Failed to save reviewer feedback to Supabase:', error.message);
+    throw new Error(`Failed to save feedback: ${error.message}`);
+  }
+}
+
+export async function saveReviewerDecision(input: ReviewerDecisionInput): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    return;
+  }
+
+  const client = createSupabaseClientInstance();
+  if (!client) {
+    return;
+  }
+
+  const decisionId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `decision-${Date.now()}`;
+
+  const { error } = await client.from(DECISION_TABLE).insert({
+    id: decisionId,
+    review_id: input.reviewId,
+    option_id: input.optionId ?? null,
+    reviewer_name: input.reviewerName,
+    type: input.type,
+    note: input.note,
+  });
+
+  if (error) {
+    console.error('Failed to save reviewer decision to Supabase:', error.message);
+    throw new Error(`Failed to save decision: ${error.message}`);
   }
 }

@@ -23,6 +23,7 @@ create table if not exists public.reviews (
   allow_comments boolean not null default true,
   allow_decisions boolean not null default true,
   content jsonb not null default '{}'::jsonb,
+  creator_seen_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -39,6 +40,7 @@ alter table public.reviews add column if not exists pin_protection_enabled boole
 alter table public.reviews add column if not exists allow_comments boolean not null default true;
 alter table public.reviews add column if not exists allow_decisions boolean not null default true;
 alter table public.reviews add column if not exists content jsonb not null default '{}'::jsonb;
+alter table public.reviews add column if not exists creator_seen_at timestamptz;
 alter table public.reviews add column if not exists created_at timestamptz not null default now();
 alter table public.reviews add column if not exists updated_at timestamptz not null default now();
 
@@ -143,6 +145,14 @@ create table if not exists public.decisions (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.review_feedback (
+  id text primary key,
+  review_id text not null references public.reviews(id) on delete cascade,
+  reviewer_name text not null,
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
 alter table public.decisions add column if not exists review_id text references public.reviews(id) on delete cascade;
 alter table public.decisions add column if not exists option_id text references public.review_options(id) on delete set null;
 alter table public.decisions add column if not exists reviewer_name text not null default 'Reviewer';
@@ -150,12 +160,18 @@ alter table public.decisions add column if not exists type text not null default
 alter table public.decisions add column if not exists note text not null default '';
 alter table public.decisions add column if not exists created_at timestamptz not null default now();
 
+alter table public.review_feedback add column if not exists review_id text references public.reviews(id) on delete cascade;
+alter table public.review_feedback add column if not exists reviewer_name text not null default 'Reviewer';
+alter table public.review_feedback add column if not exists body text not null default '';
+alter table public.review_feedback add column if not exists created_at timestamptz not null default now();
+
 alter table public.projects enable row level security;
 alter table public.reviews enable row level security;
 alter table public.review_options enable row level security;
 alter table public.assets enable row level security;
 alter table public.comments enable row level security;
 alter table public.decisions enable row level security;
+alter table public.review_feedback enable row level security;
 
 do $$
 begin
@@ -248,6 +264,16 @@ begin
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'decisions' and policyname = 'Anyone with visible review can decide') then
     create policy "Anyone with visible review can decide" on public.decisions
       for insert with check (exists (select 1 from public.reviews where reviews.id = decisions.review_id and reviews.status not in ('draft', 'approved', 'archived') and reviews.allow_decisions));
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'review_feedback' and policyname = 'Visible feedback belongs to visible reviews') then
+    create policy "Visible feedback belongs to visible reviews" on public.review_feedback
+      for select using (exists (select 1 from public.reviews where reviews.id = review_feedback.review_id and reviews.status <> 'draft'));
+  end if;
+
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'review_feedback' and policyname = 'Anyone with visible review can leave feedback') then
+    create policy "Anyone with visible review can leave feedback" on public.review_feedback
+      for insert with check (exists (select 1 from public.reviews where reviews.id = review_feedback.review_id and reviews.status not in ('draft', 'approved', 'archived') and reviews.allow_comments));
   end if;
 end
 $$;

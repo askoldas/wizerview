@@ -6,7 +6,7 @@ import { AssetSurface } from '@/components/asset-surface';
 import { FeedbackPanel } from '@/components/feedback-panel';
 import { PinCommentLayer } from '@/components/pin-comment-layer';
 import { type Comment, type ReviewData } from '@/lib/mock-data';
-import { createEmptyReviewData, loadReview, saveComment } from '@/lib/review-service';
+import { createEmptyReviewData, loadReview, saveComment, saveReviewerDecision, saveReviewerFeedback, type ReviewerDecisionType } from '@/lib/review-service';
 
 interface ClientReviewPageProps {
   reviewId: string;
@@ -27,6 +27,7 @@ export function ClientReviewPage({ reviewId }: ClientReviewPageProps) {
   const [activeOptionId, setActiveOptionId] = useState(reviewData.options[0]?.id ?? '');
   const [activeAssetId, setActiveAssetId] = useState(reviewData.options[0]?.assets[0]?.id ?? '');
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let ignored = false;
@@ -83,7 +84,9 @@ export function ClientReviewPage({ reviewId }: ClientReviewPageProps) {
     setPendingComment(null);
     setReviewState((current) => {
       const nextReview = { ...current, comments: [...current.comments, comment] };
-      void saveComment(nextReview, comment);
+      saveComment(nextReview, comment)
+        .then(() => setSaveMessage('Comment saved.'))
+        .catch((error) => setSaveMessage(error instanceof Error ? error.message : 'Could not save comment.'));
       return nextReview;
     });
     setActiveCommentId(comment.id);
@@ -94,22 +97,58 @@ export function ClientReviewPage({ reviewId }: ClientReviewPageProps) {
     setReviewState((current) => ({ ...current, overallFeedback: value }));
   };
 
+  const handleSaveFeedback = async () => {
+    if (!requireName()) return;
+    if (!reviewState.overallFeedback.trim()) return;
+
+    try {
+      await saveReviewerFeedback({
+        reviewId,
+        reviewerName,
+        body: reviewState.overallFeedback.trim(),
+      });
+      setSaveMessage('Feedback saved.');
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : 'Could not save feedback.');
+    }
+  };
+
+  const persistDecision = async (type: ReviewerDecisionType, note: string, optionId?: string | null) => {
+    try {
+      await saveReviewerDecision({
+        reviewId,
+        optionId: optionId ?? null,
+        reviewerName,
+        type,
+        note,
+      });
+      setSaveMessage('Decision saved.');
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : 'Could not save decision.');
+    }
+  };
+
   const handlePreferOption = (optionId: string) => {
     if (!requireName()) return;
     const selectedOption = reviewState.options.find((option) => option.id === optionId);
     if (!selectedOption) return;
-    setReviewState((current) => ({ ...current, selectedDirection: optionId, decision: `Preferred option: ${selectedOption.title}` }));
+    const note = `Preferred option: ${selectedOption.title}`;
+    setReviewState((current) => ({ ...current, selectedDirection: optionId, decision: note }));
+    void persistDecision('direction_selected', note, optionId);
   };
 
   const handleFinalizeDirection = () => {
     if (!requireName()) return;
     if (!activeOption) return;
-    setReviewState((current) => ({ ...current, decision: `Selected direction: ${activeOption.title}` }));
+    const note = `Selected direction: ${activeOption.title}`;
+    setReviewState((current) => ({ ...current, selectedDirection: activeOption.id, decision: note }));
+    void persistDecision('direction_selected', note, activeOption.id);
   };
 
-  const handleDecisionChange = (decision: string) => {
+  const handleDecisionChange = (decision: string, type: ReviewerDecisionType) => {
     if (!requireName()) return;
     setReviewState((current) => ({ ...current, decision }));
+    void persistDecision(type, decision, null);
   };
 
   const handleNameSubmit = () => {
@@ -163,6 +202,7 @@ export function ClientReviewPage({ reviewId }: ClientReviewPageProps) {
             </div>
             <div className="rounded-[10px] bg-stone-100 px-3 py-2 text-sm font-medium text-stone-600">{reviewState.client}</div>
           </div>
+          {saveMessage ? <p className="mt-3 text-sm font-medium text-stone-600">{saveMessage}</p> : null}
         </header>
 
         <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -260,6 +300,9 @@ export function ClientReviewPage({ reviewId }: ClientReviewPageProps) {
             <div className="rounded-[14px] border border-stone-200 bg-white p-4 shadow-sm">
               <p className="text-sm font-medium text-stone-500">Feedback</p>
               <FeedbackPanel value={reviewState.overallFeedback} onChange={handleFeedbackChange} label="Overall feedback" />
+              <button onClick={handleSaveFeedback} className="mt-3 rounded-[10px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">
+                Save feedback
+              </button>
             </div>
 
             <div className="rounded-[14px] border border-stone-200 bg-white p-4 shadow-sm">
@@ -270,16 +313,16 @@ export function ClientReviewPage({ reviewId }: ClientReviewPageProps) {
                     <button onClick={handleFinalizeDirection} className="rounded-[10px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">
                       Select {activeOption?.title ?? 'this option'}
                     </button>
-                    <button onClick={() => handleDecisionChange('Suggest combining options')} className="rounded-[10px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">
+                    <button onClick={() => handleDecisionChange('Suggest combining options', 'combine_options')} className="rounded-[10px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">
                       Suggest combining options
                     </button>
                   </>
                 ) : (
-                  <button onClick={() => handleDecisionChange('Approve')} className="rounded-[10px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">
+                  <button onClick={() => handleDecisionChange('Approve', 'approved')} className="rounded-[10px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">
                     Approve
                   </button>
                 )}
-                <button onClick={() => handleDecisionChange('Request changes')} className="rounded-[10px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">
+                <button onClick={() => handleDecisionChange('Request changes', 'changes_requested')} className="rounded-[10px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">
                   Request changes
                 </button>
               </div>
