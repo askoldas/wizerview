@@ -15,8 +15,8 @@ Public reviewers do not need an account. With an active shared link, they can re
 Public reviewers must not be able to change creator-owned structure:
 
 - review title, client name, instructions, status, owner, project, or content snapshot
-- versions/options
-- assets or uploaded previews
+- asset or version labels
+- assets, versions, or uploaded previews
 - share settings
 
 Decision status sync is handled in the database by `sync_review_status_from_decision()`, an insert trigger on `public.decisions`. This lets reviewer decisions update the parent review status without granting public update access to `public.reviews`.

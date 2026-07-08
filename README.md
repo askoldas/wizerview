@@ -2,29 +2,29 @@
 
 WizerView is a lightweight client review and approval tool for freelancers and small creative teams.
 
-It helps creators send one visual review link where clients can compare options, leave pinned feedback on assets, and approve or request changes without creating an account.
+It helps creators send one visual review link where clients can compare asset versions, leave pinned feedback on the exact version, and approve or request changes without creating an account.
 
 ## Core Positioning
 
-Send clients one visual review link. Compare options, collect clear feedback, and get approval without client accounts.
+Send clients one visual review link. Compare versions, collect clear feedback, and get approval without client accounts.
 
 ## Product Principle
 
 Everything is centered around the asset, not the conversation.
 
-WizerView is not a generic project management tool. The work itself is the center of the review. Comments, replies, choices, and approvals stay attached to the asset, option, section, or review they refer to.
+WizerView is not a generic project management tool. The work itself is the center of the review. Comments, replies, choices, and approvals stay attached to the asset, version, or review they refer to.
 
 ## MVP Direction
 
 The first prototype should focus on:
 
 - Creating a review before requiring project structure.
-- Grouping assets into review sections.
-- Supporting two section modes: `Review Together` and `Compare Options`.
+- Organizing reviews around assets and versions.
+- Supporting asset-specific version comparison.
 - Uploading visual assets: images, screenshots, and PDFs.
 - Displaying PDFs as page-based review surfaces.
 - Adding simple pinned comments to visual assets.
-- Collecting option-level, section-level, and overall feedback.
+- Collecting version-specific pinned feedback and overall review feedback.
 - Requiring reviewer name before comments or decisions.
 - Supporting optional PIN protection later.
 - Letting the reviewer approve, request changes, or select a direction.
@@ -57,6 +57,7 @@ The prototype includes:
 - [Technical Stack](docs/technical-stack.md)
 - [Pricing Strategy](docs/pricing-strategy.md)
 - [Asset Processing and Preview Storage](docs/asset-processing.md)
+- [Asset Version Model](docs/asset-version-model.md)
 - [Share Links and Reviewer Permissions](docs/share-links-and-permissions.md)
 - [Comment Lifecycle](docs/comment-lifecycle.md)
 - [Codex Prototype Prompt](docs/codex-prototype-prompt.md)

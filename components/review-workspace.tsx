@@ -1,15 +1,18 @@
 "use client";
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { FiClipboard, FiTrash2, FiUploadCloud } from 'react-icons/fi';
 import type { User } from '@supabase/supabase-js';
 import { AssetSurface } from '@/components/asset-surface';
 import { FeedbackPanel } from '@/components/feedback-panel';
 import { PinCommentLayer } from '@/components/pin-comment-layer';
 import { estimateStorageSavings, processImagePreview, processPdfPreview } from '@/lib/asset-processing';
-import type { Asset, Comment, ReviewData, ReviewOption, ShareSettings } from '@/lib/mock-data';
+import type { AssetVersion, Comment, ReviewAsset, ReviewData, ShareSettings } from '@/lib/mock-data';
 import {
   createEmptyReviewData,
+  deleteAsset,
+  deleteAssetVersion,
   getReviewShareToken,
   getOpenCommentCount,
   getResolvedCommentCount,
@@ -55,14 +58,15 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const fallbackReview = useMemo(() => initialReview ?? createEmptyReviewData(fallbackReviewId), [fallbackReviewId, initialReview]);
 
   const [review, setReview] = useState<ReviewData>(fallbackReview);
-  const [activeOptionId, setActiveOptionId] = useState(fallbackReview.options[0]?.id ?? '');
-  const [activeAssetId, setActiveAssetId] = useState(fallbackReview.options[0]?.assets[0]?.id ?? '');
+  const [activeAssetId, setActiveAssetId] = useState(fallbackReview.assets[0]?.id ?? '');
+  const [activeVersionId, setActiveVersionId] = useState(fallbackReview.assets[0]?.versions[0]?.id ?? '');
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [activePdfPage, setActivePdfPage] = useState(1);
   const [rightTab, setRightTab] = useState<'notes' | 'feedback'>('notes');
   const [commentFilter, setCommentFilter] = useState<'all' | 'open' | 'resolved'>('all');
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [showPins, setShowPins] = useState(true);
+  const [isDropTargetActive, setIsDropTargetActive] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -77,11 +81,13 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const [showIdentityModal, setShowIdentityModal] = useState(false);
   const [pendingComment, setPendingComment] = useState<{
     assetId: string;
+    assetVersionId: string;
     x: number;
     y: number;
     text: string;
     author: string;
   } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!isCreator || !supabase) {
@@ -116,11 +122,12 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
 
     loader.then((loaded) => {
       if (ignored) return;
-      const firstOption = loaded.options[0];
+      const firstAsset = loaded.assets[0];
+      const firstVersion = firstAsset?.versions[0];
 
       setReview(loaded);
-      setActiveOptionId(firstOption?.id ?? '');
-      setActiveAssetId(firstOption?.assets[0]?.id ?? '');
+      setActiveAssetId(firstAsset?.id ?? '');
+      setActiveVersionId(firstVersion?.id ?? '');
       setActiveCommentId(null);
       setIsReviewLoaded(true);
     });
@@ -130,15 +137,15 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     };
   }, [fallbackReviewId, shareToken]);
 
-  const activeOption = review.options.find((option) => option.id === activeOptionId) ?? review.options[0];
-  const activeOptionIndex = Math.max(0, review.options.findIndex((option) => option.id === activeOption?.id));
-  const activeAsset = activeOption?.assets.find((asset) => asset.id === activeAssetId) ?? activeOption?.assets[0];
-  const assetComments = review.comments.filter((comment) => comment.assetId === activeAsset?.id && !comment.parentCommentId);
+  const activeAsset = review.assets.find((asset) => asset.id === activeAssetId) ?? review.assets[0];
+  const activeVersion = activeAsset?.versions.find((version) => version.id === activeVersionId) ?? activeAsset?.versions[0];
+  const activeVersionIndex = Math.max(0, activeAsset?.versions.findIndex((version) => version.id === activeVersion?.id) ?? 0);
+  const assetComments = review.comments.filter((comment) => comment.assetId === activeAsset?.id && comment.assetVersionId === activeVersion?.id && !comment.parentCommentId);
   const filteredAssetComments = assetComments.filter((comment) => commentFilter === 'all' || (comment.status ?? 'open') === commentFilter);
   const openCommentCount = getOpenCommentCount(review.comments);
   const resolvedCommentCount = getResolvedCommentCount(review.comments);
   const totalComments = review.comments.filter((comment) => !comment.parentCommentId).length;
-  const hasMultipleVersions = review.options.length > 1;
+  const hasMultipleVersions = (activeAsset?.versions.length ?? 0) > 1;
   const shareSummary = useMemo(() => {
     const parts = [review.shareSettings.reviewerNameRequired ? 'name required' : 'name optional'];
     if (review.shareSettings.pinProtection) parts.push('PIN');
@@ -148,12 +155,12 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   }, [review.shareSettings]);
 
   useEffect(() => {
-    if (!activeOption) return;
-    if (!activeOption.assets.some((asset) => asset.id === activeAssetId)) {
-      setActiveAssetId(activeOption.assets[0]?.id ?? '');
+    if (!activeAsset) return;
+    if (!activeAsset.versions.some((version) => version.id === activeVersionId)) {
+      setActiveVersionId(activeAsset.versions[0]?.id ?? '');
       setActiveCommentId(null);
     }
-  }, [activeAssetId, activeOption]);
+  }, [activeAsset, activeVersionId]);
 
   useEffect(() => {
     if (!isCreator || !isReviewLoaded) return;
@@ -267,24 +274,15 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     setSaveMessage(null);
   };
 
-  const handleAssetUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !activeOption) return;
-
+  const processAssetFile = async (file: File) => {
+    if (!activeAsset || !activeVersion) return;
     if (isSupabaseConfigured() && !authUser) {
       setUploadMessage('Sign in before uploading optimized previews.');
-      event.target.value = '';
       return;
     }
 
-    const pendingAssetId = `asset-${Date.now()}`;
-    const pendingAsset: Asset = {
-      id: pendingAssetId,
-      title: file.name.replace(/\.[^.]+$/, ''),
-      kind: file.type === 'application/pdf' ? 'pdf' : 'screenshot',
-      description: 'Preparing an optimized review preview.',
-      accent: 'from-stone-700 via-stone-500 to-stone-200',
-      notes: 'Processing preview...',
+    const pendingVersion: AssetVersion = {
+      ...activeVersion,
       status: 'processing',
       originalName: file.name,
       originalMimeType: file.type,
@@ -294,20 +292,24 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
 
     setReview((current) => ({
       ...current,
-      options: current.options.map((option) => (option.id === activeOption.id ? { ...option, assets: [...option.assets, pendingAsset] } : option)),
+      assets: current.assets.map((asset) =>
+        asset.id === activeAsset.id
+          ? {
+              ...asset,
+              title: asset.title === 'Primary asset' ? file.name.replace(/\.[^.]+$/, '') : asset.title,
+              assetType: file.type === 'application/pdf' ? 'pdf' : asset.assetType,
+              versions: asset.versions.map((version) => (version.id === activeVersion.id ? pendingVersion : version)),
+            }
+          : asset
+      ),
     }));
-    setActiveAssetId(pendingAssetId);
     setActivePdfPage(1);
     setUploadMessage(`Uploading ${file.name}...`);
 
     try {
       const processed = file.type === 'application/pdf' ? await processPdfPreview(file) : await processImagePreview(file);
-      const nextAsset: Asset = {
-        ...pendingAsset,
-        title: processed.originalName.replace(/\.[^.]+$/, ''),
-        kind: processed.kind === 'pdf' ? 'pdf' : 'screenshot',
-        description: processed.storageHint,
-        notes: `${processed.previewMimeType.toUpperCase()} preview / ${formatByteSize(processed.previewBytes)} / ${estimateStorageSavings(processed.originalBytes, processed.previewBytes)}% smaller`,
+      const nextVersion: AssetVersion = {
+        ...pendingVersion,
         status: 'ready',
         originalName: processed.originalName,
         originalMimeType: processed.originalMimeType,
@@ -318,6 +320,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         previewBytes: processed.previewBytes,
         storagePath: processed.storagePath,
         thumbnailStoragePath: processed.thumbnailStoragePath,
+        mimeType: processed.originalMimeType ?? processed.previewMimeType,
         width: processed.width,
         height: processed.height,
         pageCount: processed.pageCount,
@@ -327,56 +330,191 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
 
       setReview((current) => ({
         ...current,
-        options: current.options.map((option) => (option.id === activeOption.id ? { ...option, assets: option.assets.map((asset) => (asset.id === pendingAssetId ? nextAsset : asset)) } : option)),
+        assets: current.assets.map((asset) =>
+          asset.id === activeAsset.id
+            ? {
+                ...asset,
+                title: asset.title === 'Primary asset' ? processed.originalName.replace(/\.[^.]+$/, '') : asset.title,
+                description: processed.storageHint,
+                notes: `${processed.previewMimeType.toUpperCase()} preview / ${formatByteSize(processed.previewBytes)} / ${estimateStorageSavings(processed.originalBytes, processed.previewBytes)}% smaller`,
+                assetType: processed.kind === 'pdf' ? 'pdf' : 'screenshot',
+                versions: asset.versions.map((version) => (version.id === activeVersion.id ? nextVersion : version)),
+              }
+            : asset
+        ),
       }));
       setUploadMessage(`Original ${formatByteSize(processed.originalBytes)} -> Preview ${formatByteSize(processed.previewBytes)} ${processed.previewMimeType.toUpperCase()}`);
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Processing failed.';
       setReview((current) => ({
         ...current,
-        options: current.options.map((option) => (option.id === activeOption.id ? { ...option, assets: option.assets.map((asset) => (asset.id === pendingAssetId ? { ...asset, status: 'failed', notes: reason, description: 'Processing failed.' } : asset)) } : option)),
+        assets: current.assets.map((asset) =>
+          asset.id === activeAsset.id
+            ? {
+                ...asset,
+                notes: reason,
+                versions: asset.versions.map((version) => (version.id === activeVersion.id ? { ...version, status: 'failed', storageHint: 'Processing failed.' } : version)),
+              }
+            : asset
+        ),
       }));
       setUploadMessage(reason);
-    } finally {
-      event.target.value = '';
+    }
+  };
+
+  const handleAssetUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    await processAssetFile(file);
+    event.target.value = '';
+  };
+
+  const handleDropFile = async (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setIsDropTargetActive(false);
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    await processAssetFile(file);
+  };
+
+  const handlePasteFromClipboard = async () => {
+    if (typeof navigator === 'undefined') return;
+    const clipboard = navigator.clipboard as Clipboard & { read?: () => Promise<ClipboardItem[]> };
+
+    if (!clipboard?.read) {
+      setUploadMessage('Clipboard image paste is not available in this browser.');
+      return;
+    }
+
+    try {
+      const items = await clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((type) => type.startsWith('image/'));
+        if (!imageType) continue;
+        const blob = await item.getType(imageType);
+        const extension = imageType.split('/')[1] || 'png';
+        await processAssetFile(new File([blob], `clipboard-${Date.now()}.${extension}`, { type: imageType }));
+        return;
+      }
+      setUploadMessage('No image found on the clipboard.');
+    } catch (error) {
+      setUploadMessage(error instanceof Error ? error.message : 'Could not paste from clipboard.');
     }
   };
 
   const addVersion = () => {
-    const nextIndex = review.options.length;
-    const newOption: ReviewOption = {
-      id: `option-${Date.now()}`,
-      title: versionLabel(nextIndex),
-      description: 'A parallel version for the reviewer to compare.',
-      assets: [],
+    if (!activeAsset) return;
+    const nextIndex = activeAsset.versions.length;
+    const newVersion: AssetVersion = {
+      id: `${activeAsset.id}-version-${Date.now()}`,
+      assetId: activeAsset.id,
+      reviewId: review.id,
+      label: versionLabel(nextIndex),
+      versionNumber: nextIndex + 1,
+      sortOrder: nextIndex,
+      status: 'idle',
     };
 
     setReview((current) => ({
       ...current,
-      options: [...current.options, newOption],
+      assets: current.assets.map((asset) => (asset.id === activeAsset.id ? { ...asset, versions: [...asset.versions, newVersion] } : asset)),
     }));
-    setActiveOptionId(newOption.id);
-    setActiveAssetId('');
+    setActiveVersionId(newVersion.id);
     setActiveCommentId(null);
   };
 
   const addRelatedAsset = () => {
-    if (!activeOption) return;
-    const newAsset: Asset = {
+    const newAssetId = `asset-${Date.now()}`;
+    const newVersionId = `${newAssetId}-version-a`;
+    const newAsset: ReviewAsset = {
       id: `asset-${Date.now()}`,
+      reviewId: review.id,
       title: 'Related asset',
-      kind: 'screenshot',
-      description: 'A new reviewable surface for this version.',
+      assetType: 'screenshot',
+      description: 'A new reviewable asset.',
+      sortOrder: review.assets.length,
+      status: 'in_review',
       accent: 'from-stone-700 via-stone-500 to-stone-200',
       notes: 'Ready for review.',
+      versions: [
+        {
+          id: newVersionId,
+          assetId: newAssetId,
+          reviewId: review.id,
+          label: 'Version A',
+          versionNumber: 1,
+          sortOrder: 0,
+          status: 'idle',
+        },
+      ],
     };
 
     setReview((current) => ({
       ...current,
-      options: current.options.map((option) => (option.id === activeOption.id ? { ...option, assets: [...option.assets, newAsset] } : option)),
+      assets: [...current.assets, { ...newAsset, id: newAssetId }],
     }));
-    setActiveAssetId(newAsset.id);
+    setActiveAssetId(newAssetId);
+    setActiveVersionId(newVersionId);
     setActiveCommentId(null);
+  };
+
+  const handleDeleteAsset = async (targetAsset = activeAsset) => {
+    if (!isCreator || !targetAsset) return;
+
+    const confirmed = window.confirm(`Delete "${targetAsset.title}" and all of its versions and comments?`);
+    if (!confirmed) return;
+
+    const deletedAssetId = targetAsset.id;
+    const remainingAssets = review.assets.filter((asset) => asset.id !== deletedAssetId);
+    const nextAsset = remainingAssets[0];
+
+    try {
+      await deleteAsset(review, deletedAssetId);
+      setReview((current) => ({
+        ...current,
+        assets: current.assets.filter((asset) => asset.id !== deletedAssetId),
+        comments: current.comments.filter((comment) => comment.assetId !== deletedAssetId),
+        selectedAssetVersionId: current.selectedAssetVersionId && current.assets.find((asset) => asset.id === deletedAssetId)?.versions.some((version) => version.id === current.selectedAssetVersionId) ? null : current.selectedAssetVersionId,
+        selectedDirection: current.selectedDirection && current.assets.find((asset) => asset.id === deletedAssetId)?.versions.some((version) => version.id === current.selectedDirection) ? null : current.selectedDirection,
+      }));
+      setActiveAssetId(nextAsset?.id ?? '');
+      setActiveVersionId(nextAsset?.versions[0]?.id ?? '');
+      setActiveCommentId(null);
+      setSaveMessage('Asset deleted.');
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : 'Could not delete asset.');
+    }
+  };
+
+  const handleDeleteVersion = async () => {
+    if (!isCreator || !activeAsset || !activeVersion) return;
+
+    const confirmed = window.confirm(`Delete "${activeVersion.label}" for "${activeAsset.title}" and its comments?`);
+    if (!confirmed) return;
+
+    const deletedVersionId = activeVersion.id;
+    const remainingVersions = activeAsset.versions.filter((version) => version.id !== deletedVersionId);
+    const nextVersion = remainingVersions[0];
+
+    try {
+      await deleteAssetVersion(review, deletedVersionId);
+      setReview((current) => ({
+        ...current,
+        assets: current.assets.map((asset) =>
+          asset.id === activeAsset.id
+            ? { ...asset, versions: asset.versions.filter((version) => version.id !== deletedVersionId) }
+            : asset
+        ),
+        comments: current.comments.filter((comment) => comment.assetVersionId !== deletedVersionId),
+        selectedAssetVersionId: current.selectedAssetVersionId === deletedVersionId ? null : current.selectedAssetVersionId,
+        selectedDirection: current.selectedDirection === deletedVersionId ? null : current.selectedDirection,
+      }));
+      setActiveVersionId(nextVersion?.id ?? '');
+      setActiveCommentId(null);
+      setSaveMessage('Version deleted.');
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : 'Could not delete version.');
+    }
   };
 
   const addReplyToState = (parentCommentId: string, reply: Comment) => {
@@ -419,14 +557,14 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     setActiveCommentId(comment.id);
   };
 
-  const handleAddComment = (assetId: string, x: number, y: number, text: string, author: string) => {
+  const handleAddComment = (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string) => {
     if (!isCreator && !review.shareSettings.allowComments) {
       setSaveMessage('Comments are disabled for this review.');
       return;
     }
 
     if (!requireName()) {
-      setPendingComment({ assetId, x, y, text, author });
+      setPendingComment({ assetId, assetVersionId, x, y, text, author });
       return;
     }
 
@@ -434,6 +572,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       id: `comment-${Date.now()}`,
       reviewId: review.id,
       assetId,
+      assetVersionId,
       x,
       y,
       text,
@@ -503,9 +642,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     setShowIdentityModal(false);
 
     if (pendingComment) {
-      const { assetId, x, y, text, author } = pendingComment;
+      const { assetId, assetVersionId, x, y, text, author } = pendingComment;
       setPendingComment(null);
-      handleAddComment(assetId, x, y, text, author);
+      handleAddComment(assetId, assetVersionId, x, y, text, author);
     }
   };
 
@@ -540,7 +679,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     }
   };
 
-  const persistDecision = async (type: ReviewerDecisionType, note: string, optionId?: string | null) => {
+  const persistDecision = async (type: ReviewerDecisionType, note: string, assetVersionId?: string | null) => {
     if (!review.shareSettings.allowDecisions) {
       setSaveMessage('Decisions are disabled for this review.');
       return;
@@ -549,7 +688,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     try {
       await saveReviewerDecision({
         reviewId: review.id,
-        optionId: optionId ?? null,
+        assetVersionId: assetVersionId ?? null,
         reviewerName: reviewerName || 'Reviewer',
         type,
         note,
@@ -561,10 +700,10 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   };
 
   const handleSelectVersion = () => {
-    if (!requireName() || !activeOption) return;
-    const note = `Selected version: ${versionLabel(activeOptionIndex)}`;
-    setReview((current) => ({ ...current, selectedDirection: activeOption.id, decision: note }));
-    void persistDecision('direction_selected', note, activeOption.id);
+    if (!requireName() || !activeVersion) return;
+    const note = `Selected version: ${activeVersion.label}`;
+    setReview((current) => ({ ...current, selectedDirection: activeVersion.id, selectedAssetVersionId: activeVersion.id, decision: note }));
+    void persistDecision('direction_selected', note, activeVersion.id);
   };
 
   const handleDecisionChange = (decision: string, type: ReviewerDecisionType) => {
@@ -573,29 +712,55 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     void persistDecision(type, decision, null);
   };
 
-  const renderAssetRailButton = (asset: Asset) => (
-    <button
+  const renderAssetRailButton = (asset: ReviewAsset) => {
+    const thumbnailVersion = asset.versions.find((version) => version.thumbnailUrl || version.previewUrl) ?? asset.versions[0];
+    const isActive = activeAsset?.id === asset.id;
+
+    return (
+    <article
       key={asset.id}
-      type="button"
-      onClick={() => {
-        setActiveAssetId(asset.id);
-        setActiveCommentId(null);
-      }}
-      className={`group w-full rounded-[10px] border p-2 text-left transition ${activeAsset?.id === asset.id ? 'border-stone-950 bg-white shadow-sm' : 'border-transparent bg-stone-100/70 hover:bg-white'}`}
+      className={`group relative w-full rounded-[10px] border bg-white p-2 text-left transition ${isActive ? 'border-stone-950 shadow-sm' : 'border-transparent hover:border-stone-200'}`}
     >
-      <div className={`flex h-20 items-center justify-center rounded-[8px] bg-gradient-to-br ${asset.accent ?? 'from-stone-700 via-stone-500 to-stone-200'} text-[10px] font-semibold uppercase tracking-[0.18em] text-white`}>
-        {asset.thumbnailUrl || asset.previewUrl ? (
-          <img src={asset.thumbnailUrl ?? asset.previewUrl} alt="" className="h-full w-full rounded-[8px] object-cover" />
-        ) : (
-          asset.kind
-        )}
-      </div>
-      <div className="mt-2 flex items-start justify-between gap-2">
-        <span className="text-xs font-semibold leading-4 text-stone-900">{asset.title}</span>
-        {isCreator ? <span className="text-stone-400">...</span> : null}
-      </div>
-    </button>
-  );
+      <button
+        type="button"
+        onClick={() => {
+          setActiveAssetId(asset.id);
+          setActiveVersionId(asset.versions[0]?.id ?? '');
+          setActiveCommentId(null);
+        }}
+        className="block w-full text-left"
+      >
+        <div className={`flex h-20 items-center justify-center overflow-hidden rounded-[8px] bg-gradient-to-br ${asset.accent ?? 'from-stone-700 via-stone-500 to-stone-200'} text-[10px] font-semibold uppercase tracking-[0.18em] text-white`}>
+          {thumbnailVersion?.thumbnailUrl || thumbnailVersion?.previewUrl ? (
+            <img src={thumbnailVersion.thumbnailUrl ?? thumbnailVersion.previewUrl} alt="" className="h-full w-full rounded-[8px] object-cover" />
+          ) : (
+            asset.assetType
+          )}
+        </div>
+        <div className="mt-2 flex items-start justify-between gap-2">
+          <span className="text-xs font-semibold leading-4 text-stone-900">{asset.title}</span>
+          {isCreator ? <span className="text-stone-400">...</span> : null}
+        </div>
+      </button>
+      {isCreator ? (
+        <button
+          type="button"
+          aria-label={`Delete ${asset.title}`}
+          title="Delete asset"
+          onClick={(event) => {
+            event.stopPropagation();
+            void handleDeleteAsset(asset);
+          }}
+          className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-rose-700 shadow-sm ring-1 ring-rose-100 transition hover:bg-rose-50"
+        >
+          <FiTrash2 aria-hidden="true" className="h-4 w-4" />
+        </button>
+      ) : null}
+    </article>
+    );
+  };
+
+  const activeVersionHasPreview = Boolean(activeVersion?.previewUrl && activeVersion.status === 'ready');
 
   return (
     <main className="flex min-h-screen flex-col bg-[#f5f3ee] text-stone-950">
@@ -659,45 +824,49 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
 
       <div className="grid flex-1 lg:grid-cols-[156px_minmax(0,1fr)_360px]">
         <aside className="border-b border-stone-200 bg-stone-50/80 p-3 lg:border-b-0 lg:border-r">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-stone-500">Assets</p>
-            {isCreator ? (
-              <button type="button" onClick={addRelatedAsset} className="rounded-[8px] border border-stone-200 bg-white px-2 py-1 text-xs font-semibold text-stone-700">Add</button>
-            ) : null}
-          </div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-stone-500">Assets</p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-1">
-            {activeOption?.assets.length ? activeOption.assets.map(renderAssetRailButton) : (
-              <div className="rounded-[10px] border border-dashed border-stone-300 bg-white p-3 text-xs leading-5 text-stone-500">No assets in this version yet.</div>
+            {review.assets.length ? review.assets.map(renderAssetRailButton) : (
+              <div className="rounded-[10px] border border-dashed border-stone-300 bg-white p-3 text-xs leading-5 text-stone-500">No assets in this review yet.</div>
             )}
           </div>
           {isCreator ? (
-            <label className={`mt-3 flex cursor-pointer justify-center rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800 ${isSupabaseConfigured() && !authUser ? 'cursor-not-allowed opacity-60' : ''}`}>
-              Upload
-              <input type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="sr-only" onChange={handleAssetUpload} disabled={isSupabaseConfigured() && !authUser} />
-            </label>
+            <button type="button" onClick={addRelatedAsset} className="mt-3 flex w-full justify-center rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
+              Add asset
+            </button>
           ) : null}
           {uploadMessage ? <p className="mt-3 text-xs leading-5 text-stone-500">{uploadMessage}</p> : null}
         </aside>
 
         <section className="min-w-0 px-4 py-4 lg:px-6">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,application/pdf"
+            className="sr-only"
+            onChange={handleAssetUpload}
+            disabled={isSupabaseConfigured() && !authUser}
+          />
           <div className="flex flex-col gap-3 border-b border-stone-200 pb-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-              {review.options.map((option, index) => (
+              {(activeAsset?.versions ?? []).map((version, index) => (
                 <button
-                  key={option.id}
+                  key={version.id}
                   type="button"
                   onClick={() => {
-                    setActiveOptionId(option.id);
-                    setActiveAssetId(option.assets[0]?.id ?? '');
+                    setActiveVersionId(version.id);
                     setActiveCommentId(null);
                   }}
-                  className={`rounded-[8px] px-3 py-2 text-sm font-semibold ${activeOption?.id === option.id ? 'bg-stone-950 text-white' : 'bg-white text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50'}`}
+                  className={`rounded-[8px] px-3 py-2 text-sm font-semibold ${activeVersion?.id === version.id ? 'bg-stone-950 text-white' : 'bg-white text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50'}`}
                 >
-                  {versionLabel(index)}
+                  {version.label || versionLabel(index)}
                 </button>
               ))}
               {isCreator ? (
-                <button type="button" onClick={addVersion} className="rounded-[8px] border border-dashed border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">+ Add version</button>
+                <>
+                  <button type="button" onClick={addVersion} className="rounded-[8px] border border-dashed border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">+ Add version</button>
+                  <button type="button" onClick={() => void handleDeleteVersion()} disabled={!activeVersion} className="rounded-[8px] border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">Delete version</button>
+                </>
               ) : null}
             </div>
             <p className="text-sm text-stone-500">{isCreator || review.shareSettings.allowComments ? 'Click the preview to add a pinned note.' : 'Pinned notes are disabled for this review.'}</p>
@@ -706,8 +875,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           <div className="mt-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold text-stone-950">{versionLabel(activeOptionIndex)}</p>
-                <p className="text-sm text-stone-600">{activeOption?.description ?? 'A preview-ready surface for the reviewer.'}</p>
+                <p className="text-sm font-semibold text-stone-950">{activeVersion?.label ?? versionLabel(activeVersionIndex)}</p>
+                <p className="text-sm text-stone-600">{activeAsset?.description ?? 'A preview-ready surface for the reviewer.'}</p>
               </div>
               {!isCreator && hasMultipleVersions ? (
                 <button type="button" onClick={handleSelectVersion} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">Select this version</button>
@@ -717,10 +886,53 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             <div className="relative min-h-[470px] overflow-hidden rounded-[14px] border border-stone-200 bg-white/75 p-3 shadow-sm">
               {activeAsset ? (
                 <>
-                  <AssetSurface asset={activeAsset} />
-                  {showPins && (isCreator || review.shareSettings.allowComments) ? (
+                  {isCreator && activeVersion && !activeVersionHasPreview ? (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onDragOver={(event) => {
+                        event.preventDefault();
+                        setIsDropTargetActive(true);
+                      }}
+                      onDragLeave={() => setIsDropTargetActive(false)}
+                      onDrop={(event) => void handleDropFile(event)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') fileInputRef.current?.click();
+                      }}
+                      className={`flex min-h-[440px] flex-col items-center justify-center rounded-[12px] border border-dashed p-6 text-center transition ${isDropTargetActive ? 'border-stone-950 bg-stone-200' : 'border-stone-300 bg-stone-100'}`}
+                    >
+                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-stone-800 shadow-sm ring-1 ring-stone-200">
+                        <FiUploadCloud aria-hidden="true" className="h-7 w-7" />
+                      </div>
+                      <p className="mt-4 text-sm font-semibold text-stone-950">Drop a file here</p>
+                      <p className="mt-1 max-w-sm text-sm leading-6 text-stone-600">Upload a preview or paste an image from your clipboard for this version.</p>
+                      <div className="mt-5 flex flex-wrap justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handlePasteFromClipboard()}
+                          className="inline-flex items-center gap-2 rounded-[8px] border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-50"
+                        >
+                          <FiClipboard aria-hidden="true" className="h-4 w-4" />
+                          Paste from clipboard
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isSupabaseConfigured() && !authUser}
+                          className="inline-flex items-center gap-2 rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <FiUploadCloud aria-hidden="true" className="h-4 w-4" />
+                          Upload
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <AssetSurface asset={activeAsset} version={activeVersion} />
+                  )}
+                  {activeVersionHasPreview && showPins && (isCreator || review.shareSettings.allowComments) ? (
                     <PinCommentLayer
                       asset={activeAsset}
+                      version={activeVersion}
                       comments={review.comments}
                       onAddComment={handleAddComment}
                       activeCommentId={activeCommentId}
@@ -730,14 +942,14 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                 </>
               ) : (
                 <div className="flex min-h-[440px] items-center justify-center rounded-[12px] border border-dashed border-stone-300 bg-stone-50 text-center">
-                  <p className="max-w-[240px] text-sm text-stone-600">This version has no assets yet.</p>
+                  <p className="max-w-[240px] text-sm text-stone-600">This review has no assets yet.</p>
                 </div>
               )}
             </div>
 
-            {activeAsset?.kind === 'pdf' && activeAsset.pageCount ? (
+            {activeAsset?.assetType === 'pdf' && activeVersion?.pageCount ? (
               <div className="mt-3 flex flex-wrap gap-2">
-                {Array.from({ length: activeAsset.pageCount }, (_, index) => (
+                {Array.from({ length: activeVersion.pageCount ?? 0 }, (_, index) => (
                   <button key={index + 1} type="button" onClick={() => setActivePdfPage(index + 1)} className={`rounded-[8px] px-3 py-2 text-sm font-semibold ${activePdfPage === index + 1 ? 'bg-stone-950 text-white' : 'bg-white text-stone-700 ring-1 ring-stone-200'}`}>
                     Page {index + 1}
                   </button>

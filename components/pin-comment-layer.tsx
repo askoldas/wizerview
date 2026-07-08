@@ -1,21 +1,23 @@
 "use client";
 
 import { useState, type MouseEvent } from 'react';
-import type { Asset, Comment } from '@/lib/mock-data';
+import type { AssetVersion, Comment, ReviewAsset } from '@/lib/mock-data';
 
 interface PinCommentLayerProps {
-  asset: Asset;
+  asset: ReviewAsset;
+  version?: AssetVersion;
   comments: Comment[];
-  onAddComment: (assetId: string, x: number, y: number, text: string, author: string) => void;
+  onAddComment: (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string) => void;
   activeCommentId: string | null;
   onSelectComment: (commentId: string | null) => void;
 }
 
-export function PinCommentLayer({ asset, comments, onAddComment, activeCommentId, onSelectComment }: PinCommentLayerProps) {
+export function PinCommentLayer({ asset, version, comments, onAddComment, activeCommentId, onSelectComment }: PinCommentLayerProps) {
   const [draftText, setDraftText] = useState('');
   const [activePin, setActivePin] = useState<{ x: number; y: number } | null>(null);
 
   const handleAddPin = (event: MouseEvent<HTMLDivElement>) => {
+    if (!version) return;
     if (event.target !== event.currentTarget) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * 100;
@@ -25,8 +27,8 @@ export function PinCommentLayer({ asset, comments, onAddComment, activeCommentId
 
   const handleSave = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (!activePin || !draftText.trim()) return;
-    onAddComment(asset.id, activePin.x, activePin.y, draftText.trim(), '');
+    if (!version || !activePin || !draftText.trim()) return;
+    onAddComment(asset.id, version.id, activePin.x, activePin.y, draftText.trim(), '');
     setDraftText('');
     setActivePin(null);
   };
@@ -34,7 +36,7 @@ export function PinCommentLayer({ asset, comments, onAddComment, activeCommentId
   return (
     <div className="absolute inset-0 cursor-crosshair" onClick={handleAddPin}>
       {comments
-        .filter((comment) => comment.assetId === asset.id && !comment.parentCommentId && comment.x != null && comment.y != null)
+        .filter((comment) => comment.assetId === asset.id && comment.assetVersionId === version?.id && !comment.parentCommentId && comment.x != null && comment.y != null)
         .map((comment, index) => (
           <button
             key={comment.id}
@@ -55,7 +57,7 @@ export function PinCommentLayer({ asset, comments, onAddComment, activeCommentId
           <textarea
             value={draftText}
             onChange={(event) => setDraftText(event.target.value)}
-            placeholder="Leave a note about this asset"
+            placeholder="Leave a note about this version"
             className="mt-2 min-h-20 w-full rounded-[10px] border border-stone-200 px-3 py-2 text-sm"
           />
           <button onClick={handleSave} className="mt-3 rounded-[10px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">

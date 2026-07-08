@@ -1,10 +1,10 @@
-import { initialReview, normalizeReviewData, type Comment, type ReviewData } from '@/lib/mock-data';
+import { initialReview, normalizeReviewData, versionLabel, type AssetVersion, type Comment, type ReviewAsset, type ReviewData } from '@/lib/mock-data';
 import { createSupabaseClientInstance, isSupabaseConfigured } from '@/lib/supabase';
 
 const REVIEW_TABLE = 'reviews';
 const COMMENT_TABLE = 'comments';
-const OPTION_TABLE = 'review_options';
 const ASSET_TABLE = 'assets';
+const ASSET_VERSION_TABLE = 'asset_versions';
 const DECISION_TABLE = 'decisions';
 const FEEDBACK_TABLE = 'review_feedback';
 
@@ -32,7 +32,7 @@ export type ReviewerDecisionType = 'approved' | 'changes_requested' | 'direction
 
 export interface ReviewerDecisionInput {
   reviewId: string;
-  optionId?: string | null;
+  assetVersionId?: string | null;
   reviewerName: string;
   type: ReviewerDecisionType;
   note: string;
@@ -72,6 +72,7 @@ interface ActivityRow {
 interface CommentRow extends ActivityRow {
   id: string;
   asset_id: string;
+  asset_version_id?: string | null;
   option_id: string | null;
   parent_comment_id: string | null;
   x_percent: number | null;
@@ -90,7 +91,22 @@ interface DecisionActivityRow extends ActivityRow {
   type: ReviewerDecisionType | null;
 }
 
+interface DecisionRow {
+  type: ReviewerDecisionType | null;
+  note: string | null;
+  asset_version_id?: string | null;
+  option_id?: string | null;
+}
+
+type CommentActivityRow = ActivityRow & {
+  parent_comment_id?: string | null;
+  status?: 'open' | 'resolved' | null;
+  updated_at?: string | null;
+};
+
 export function createEmptyReviewData(reviewId: string): ReviewData {
+  const assetId = `asset-${reviewId}-a`;
+
   return {
     id: reviewId,
     shareToken: undefined,
@@ -103,12 +119,28 @@ export function createEmptyReviewData(reviewId: string): ReviewData {
       allowComments: true,
       allowDecisions: true,
     },
-    options: [
+    assets: [
       {
-        id: `option-${reviewId}-a`,
-        title: 'Version A',
-        description: 'Primary direction for review.',
-        assets: [],
+        id: assetId,
+        reviewId,
+        title: 'Primary asset',
+        description: 'A reviewable asset for client feedback.',
+        assetType: 'screenshot',
+        sortOrder: 0,
+        status: 'in_review',
+        accent: 'from-stone-700 via-stone-500 to-stone-200',
+        notes: 'Ready for review.',
+        versions: [
+          {
+            id: `${assetId}-version-a`,
+            assetId,
+            reviewId,
+            label: 'Version A',
+            versionNumber: 1,
+            sortOrder: 0,
+            status: 'idle',
+          },
+        ],
       },
     ],
     overallFeedback: '',
@@ -121,12 +153,21 @@ export function createEmptyReviewData(reviewId: string): ReviewData {
 function getReviewStatus(review: ReviewData) {
   if (review.decision === 'Approve') return 'approved';
   if (review.decision === 'Request changes') return 'changes_requested';
-  if (review.selectedDirection) return 'direction_selected';
+  if (review.selectedAssetVersionId || review.selectedDirection) return 'direction_selected';
   return 'in_review';
 }
 
-function findOptionIdForAsset(review: ReviewData, assetId: string) {
-  return review.options.find((option) => option.assets.some((asset) => asset.id === assetId))?.id ?? null;
+function findAssetVersionIdForAsset(review: ReviewData, assetId: string) {
+  return review.assets.find((asset) => asset.id === assetId)?.versions[0]?.id ?? null;
+}
+
+function findAssetForVersion(review: ReviewData, assetVersionId?: string | null) {
+  if (!assetVersionId) return null;
+  return review.assets.find((asset) => asset.versions.some((version) => version.id === assetVersionId)) ?? null;
+}
+
+function dbAssetType(assetType: string) {
+  return assetType === 'image' || assetType === 'pdf' ? assetType : 'screenshot';
 }
 
 function mergeComments(snapshotComments: Comment[], tableComments: Comment[]) {
@@ -220,46 +261,15 @@ async function syncReviewRows(review: ReviewData) {
   const client = createSupabaseClientInstance();
   if (!client) return;
 
-  const optionRows = review.options.map((option, sortOrder) => ({
-    id: option.id,
+  const assetRows = review.assets.map((asset, sortOrder) => ({
+    id: asset.id,
     review_id: review.id,
-    title: option.title,
-    description: option.description,
-    feedback: option.feedback ?? '',
+    type: dbAssetType(asset.assetType),
+    title: asset.title,
+    description: asset.description,
+    processing_status: 'ready',
     sort_order: sortOrder,
   }));
-
-  if (optionRows.length > 0) {
-    const { error } = await client.from(OPTION_TABLE).upsert(optionRows);
-    if (error) {
-      console.error('Failed to sync review options to Supabase:', error.message);
-      throw new Error(`Failed to sync review options: ${error.message}`);
-    }
-  }
-
-  const assetRows = review.options.flatMap((option) =>
-    option.assets.map((asset, sortOrder) => ({
-      id: asset.id,
-      review_id: review.id,
-      option_id: option.id,
-      type: asset.kind,
-      title: asset.title,
-      description: asset.description,
-      original_name: asset.originalName ?? null,
-      original_mime_type: asset.originalMimeType ?? null,
-      original_bytes: asset.originalBytes ?? null,
-      preview_mime_type: asset.previewMimeType ?? null,
-      preview_bytes: asset.previewBytes ?? null,
-      storage_path: asset.storagePath ?? null,
-      thumbnail_storage_path: asset.thumbnailStoragePath ?? null,
-      width: asset.width ?? null,
-      height: asset.height ?? null,
-      page_number: asset.pageNumber ?? null,
-      page_count: asset.pageCount ?? null,
-      processing_status: asset.status ?? 'idle',
-      sort_order: sortOrder,
-    }))
-  );
 
   if (assetRows.length > 0) {
     const { error } = await client.from(ASSET_TABLE).upsert(assetRows);
@@ -268,6 +278,92 @@ async function syncReviewRows(review: ReviewData) {
       throw new Error(`Failed to sync review assets: ${error.message}`);
     }
   }
+
+  const versionRows = review.assets.flatMap((asset) =>
+    asset.versions.map((version, sortOrder) => ({
+      id: version.id,
+      review_id: review.id,
+      asset_id: asset.id,
+      label: version.label,
+      version_number: version.versionNumber,
+      sort_order: sortOrder,
+      source_url: version.sourceUrl ?? null,
+      preview_url: version.previewUrl ?? null,
+      thumbnail_url: version.thumbnailUrl ?? null,
+      storage_path: version.storagePath ?? null,
+      mime_type: version.mimeType ?? version.originalMimeType ?? version.previewMimeType ?? null,
+      width: version.width ?? null,
+      height: version.height ?? null,
+      page_count: version.pageCount ?? null,
+      preview_bytes: version.previewBytes ?? null,
+      processing_status: version.status ?? 'idle',
+      status: version.status ?? 'idle',
+      metadata: {
+        originalName: version.originalName ?? null,
+        originalMimeType: version.originalMimeType ?? null,
+        originalBytes: version.originalBytes ?? null,
+        previewMimeType: version.previewMimeType ?? null,
+        thumbnailStoragePath: version.thumbnailStoragePath ?? null,
+        pageNumber: version.pageNumber ?? null,
+        storageHint: version.storageHint ?? null,
+      },
+    }))
+  );
+
+  if (versionRows.length > 0) {
+    const { error } = await client.from(ASSET_VERSION_TABLE).upsert(versionRows);
+    if (error) {
+      console.warn('Failed to sync asset versions to Supabase. Apply the asset_versions migration to enable structured version rows:', error.message);
+    }
+  }
+}
+
+async function loadCommentRows(reviewId: string): Promise<CommentRow[]> {
+  const client = createSupabaseClientInstance();
+  if (!client) return [];
+
+  const richResult = await client
+    .from(COMMENT_TABLE)
+    .select('id, review_id, asset_id, asset_version_id, option_id, parent_comment_id, x_percent, y_percent, page_number, body, author_name, author_role, status, resolved_at, resolved_by, created_at, updated_at')
+    .eq('review_id', reviewId)
+    .order('created_at', { ascending: true });
+
+  if (!richResult.error) {
+    return (richResult.data ?? []) as CommentRow[];
+  }
+
+  console.warn('Falling back to legacy comment query:', richResult.error.message);
+
+  const legacyResult = await client
+    .from(COMMENT_TABLE)
+    .select('id, asset_id, x_percent, y_percent, body, author_name')
+    .eq('review_id', reviewId);
+
+  if (legacyResult.error) {
+    console.error('Failed to load comments from Supabase:', legacyResult.error.message);
+    return [];
+  }
+
+  return ((legacyResult.data ?? []) as Array<{
+    id: string;
+    asset_id: string;
+    x_percent: number | null;
+    y_percent: number | null;
+    body: string;
+    author_name: string;
+  }>).map((comment) => ({
+    ...comment,
+    review_id: reviewId,
+    option_id: null,
+    parent_comment_id: null,
+    page_number: null,
+    author_role: 'reviewer',
+    status: 'open',
+    resolved_at: null,
+    resolved_by: null,
+    created_at: null,
+    updated_at: null,
+  }));
 }
 
 async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
@@ -281,21 +377,12 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
   const client = createSupabaseClientInstance();
   if (!client) return reviewWithMetadata;
 
-  const { data: commentRows, error: commentError } = await client
-    .from(COMMENT_TABLE)
-    .select('id, review_id, asset_id, option_id, parent_comment_id, x_percent, y_percent, page_number, body, author_name, author_role, status, resolved_at, resolved_by, created_at, updated_at')
-    .eq('review_id', row.id)
-    .order('created_at', { ascending: true });
-
-  if (commentError) {
-    console.error('Failed to load comments from Supabase:', commentError.message);
-    return reviewWithMetadata;
-  }
-
-  const tableComments = ((commentRows ?? []) as CommentRow[]).map((comment) => ({
+  const commentRows = await loadCommentRows(row.id);
+  const tableComments = commentRows.map((comment) => ({
     id: comment.id,
     reviewId: comment.review_id,
     assetId: comment.asset_id,
+    assetVersionId: comment.asset_version_id ?? comment.option_id,
     optionId: comment.option_id,
     parentCommentId: comment.parent_comment_id,
     x: comment.x_percent == null ? undefined : Number(comment.x_percent),
@@ -322,15 +409,28 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
     console.error('Failed to load review feedback from Supabase:', feedbackError.message);
   }
 
-  const { data: decisionRows, error: decisionError } = await client
+  const { data: richDecisionRows, error: richDecisionError } = await client
     .from(DECISION_TABLE)
-    .select('type, note, option_id')
+    .select('type, note, asset_version_id, option_id')
     .eq('review_id', row.id)
     .order('created_at', { ascending: false })
     .limit(1);
 
-  if (decisionError) {
-    console.error('Failed to load review decisions from Supabase:', decisionError.message);
+  let decisionRows = (richDecisionRows ?? []) as DecisionRow[];
+  if (richDecisionError) {
+    console.warn('Falling back to legacy decision query:', richDecisionError.message);
+    const { data: legacyDecisionRows, error: legacyDecisionError } = await client
+      .from(DECISION_TABLE)
+      .select('type, note, option_id')
+      .eq('review_id', row.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (legacyDecisionError) {
+      console.error('Failed to load review decisions from Supabase:', legacyDecisionError.message);
+    } else {
+      decisionRows = (legacyDecisionRows ?? []) as DecisionRow[];
+    }
   }
 
   const latestDecision = decisionRows?.[0];
@@ -340,7 +440,8 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
     comments: mergeComments(reviewWithMetadata.comments, tableComments),
     overallFeedback: feedbackRows?.[0]?.body ?? reviewWithMetadata.overallFeedback,
     decision: latestDecision?.note ?? reviewWithMetadata.decision,
-    selectedDirection: latestDecision?.option_id ?? reviewWithMetadata.selectedDirection,
+    selectedDirection: latestDecision?.asset_version_id ?? latestDecision?.option_id ?? reviewWithMetadata.selectedDirection,
+    selectedAssetVersionId: latestDecision?.asset_version_id ?? latestDecision?.option_id ?? reviewWithMetadata.selectedAssetVersionId,
   };
 }
 
@@ -421,7 +522,7 @@ export async function loadReviewByShareToken(shareToken: string): Promise<Review
       shareToken,
       title: 'Review link unavailable',
       instructions: 'This shared review is not available. It may still be a draft, archived, or the link may be incorrect.',
-      options: [],
+      assets: [],
     };
   }
 
@@ -480,27 +581,35 @@ export async function listReviews(): Promise<ReviewSummary[]> {
 
   const reviewIds = (data ?? []).map((row) => row.id);
   const emptyActivityResult: { data: ActivityRow[]; error: null } = { data: [], error: null };
-  const [commentsResult, feedbackResult] = reviewIds.length > 0
+  const [commentsResult, feedbackResult, decisionsResult] = reviewIds.length > 0
     ? await Promise.all([
-        client.from(COMMENT_TABLE).select('review_id, parent_comment_id, status, created_at, updated_at').in('review_id', reviewIds),
+        client.from(COMMENT_TABLE).select('review_id, parent_comment_id, status, created_at').in('review_id', reviewIds),
         client.from(FEEDBACK_TABLE).select('review_id, created_at').in('review_id', reviewIds),
+        client.from(DECISION_TABLE).select('review_id, type, created_at').in('review_id', reviewIds),
       ])
     : [
         emptyActivityResult,
         emptyActivityResult,
+        { data: [] as DecisionActivityRow[], error: null },
       ];
 
+  let commentActivityRows = (commentsResult.data ?? []) as CommentActivityRow[];
   if (commentsResult.error) {
-    throw new Error(`Failed to load comment activity: ${commentsResult.error.message}`);
+    console.warn('Falling back to legacy comment activity query:', commentsResult.error.message);
+    const legacyCommentsResult = reviewIds.length > 0
+      ? await client.from(COMMENT_TABLE).select('review_id, created_at').in('review_id', reviewIds)
+      : emptyActivityResult;
+
+    if (legacyCommentsResult.error) {
+      throw new Error(`Failed to load comment activity: ${legacyCommentsResult.error.message}`);
+    }
+
+    commentActivityRows = (legacyCommentsResult.data ?? []) as CommentActivityRow[];
   }
 
   if (feedbackResult.error) {
     throw new Error(`Failed to load feedback activity: ${feedbackResult.error.message}`);
   }
-
-  const decisionsResult = reviewIds.length > 0
-    ? await client.from(DECISION_TABLE).select('review_id, type, created_at').in('review_id', reviewIds)
-    : { data: [] as DecisionActivityRow[], error: null };
 
   if (decisionsResult.error) {
     throw new Error(`Failed to load decision activity: ${decisionsResult.error.message}`);
@@ -508,7 +617,7 @@ export async function listReviews(): Promise<ReviewSummary[]> {
 
   return (data ?? []).map((row) => {
     const content = normalizeReviewData((row.content ?? createEmptyReviewData(row.id)) as ReviewData);
-    const commentRows = ((commentsResult.data ?? []) as Array<ActivityRow & { parent_comment_id?: string | null; status?: string | null; updated_at?: string | null }>).filter((comment) => comment.review_id === row.id);
+    const commentRows = commentActivityRows.filter((comment) => comment.review_id === row.id);
     const topLevelComments = commentRows.filter((comment) => !comment.parent_comment_id);
     const comments = {
       total: topLevelComments.length,
@@ -624,6 +733,32 @@ export async function markReviewSeen(reviewId: string): Promise<void> {
   }
 }
 
+export async function deleteReview(reviewId: string): Promise<void> {
+  if (!isSupabaseConfigured()) {
+    return;
+  }
+
+  const client = createSupabaseClientInstance();
+  if (!client) {
+    return;
+  }
+
+  const { data: userData, error: userError } = await client.auth.getUser();
+  if (userError || !userData.user) {
+    throw new Error('Sign in to delete reviews.');
+  }
+
+  const { error } = await client
+    .from(REVIEW_TABLE)
+    .delete()
+    .eq('id', reviewId);
+
+  if (error) {
+    console.error('Failed to delete review from Supabase:', error.message);
+    throw new Error(`Failed to delete review: ${error.message}`);
+  }
+}
+
 export async function saveReview(review: ReviewData): Promise<void> {
   if (!isSupabaseConfigured()) {
     return;
@@ -662,6 +797,153 @@ export async function saveReview(review: ReviewData): Promise<void> {
   await syncReviewRows(review);
 }
 
+export async function createAsset(review: ReviewData, payload: Partial<ReviewAsset>): Promise<ReviewAsset> {
+  const assetId = payload.id ?? (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `asset-${Date.now()}`);
+  const asset: ReviewAsset = {
+    id: assetId,
+    reviewId: review.id,
+    title: payload.title ?? 'Review asset',
+    description: payload.description ?? 'A reviewable asset.',
+    instructions: payload.instructions,
+    assetType: payload.assetType ?? 'screenshot',
+    sortOrder: payload.sortOrder ?? review.assets.length,
+    status: payload.status ?? 'in_review',
+    accent: payload.accent ?? 'from-stone-700 via-stone-500 to-stone-200',
+    notes: payload.notes ?? 'Ready for review.',
+    versions: payload.versions ?? [],
+    metadata: payload.metadata,
+    createdAt: payload.createdAt,
+    updatedAt: payload.updatedAt,
+  };
+
+  await saveReview({ ...review, assets: [...review.assets, asset] });
+  return asset;
+}
+
+export async function updateAsset(review: ReviewData, assetId: string, payload: Partial<ReviewAsset>): Promise<ReviewAsset> {
+  const existingAsset = review.assets.find((asset) => asset.id === assetId);
+  if (!existingAsset) throw new Error('Asset not found.');
+
+  const nextAsset = { ...existingAsset, ...payload, id: assetId };
+  await saveReview({
+    ...review,
+    assets: review.assets.map((asset) => (asset.id === assetId ? nextAsset : asset)),
+  });
+  return nextAsset;
+}
+
+export async function deleteAsset(review: ReviewData, assetId: string): Promise<void> {
+  const nextReview = {
+    ...review,
+    assets: review.assets.filter((asset) => asset.id !== assetId),
+    comments: review.comments.filter((comment) => comment.assetId !== assetId),
+    selectedAssetVersionId: findAssetForVersion(review, review.selectedAssetVersionId)?.id === assetId ? null : review.selectedAssetVersionId,
+    selectedDirection: findAssetForVersion(review, review.selectedDirection)?.id === assetId ? null : review.selectedDirection,
+  };
+
+  if (isSupabaseConfigured()) {
+    const client = createSupabaseClientInstance();
+    if (client) {
+      const { error } = await client.from(ASSET_TABLE).delete().eq('id', assetId).eq('review_id', review.id);
+      if (error) {
+        console.error('Failed to delete asset from Supabase:', error.message);
+        throw new Error(`Failed to delete asset: ${error.message}`);
+      }
+    }
+  }
+
+  await saveReview(nextReview);
+}
+
+export async function createAssetVersion(review: ReviewData, assetId: string, payload: Partial<AssetVersion>): Promise<AssetVersion> {
+  const asset = review.assets.find((candidate) => candidate.id === assetId);
+  if (!asset) throw new Error('Asset not found.');
+
+  const versionIndex = asset.versions.length;
+  const version: AssetVersion = {
+    id: payload.id ?? (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${assetId}-version-${Date.now()}`),
+    assetId,
+    reviewId: review.id,
+    label: payload.label ?? versionLabel(versionIndex),
+    versionNumber: payload.versionNumber ?? versionIndex + 1,
+    sortOrder: payload.sortOrder ?? versionIndex,
+    sourceUrl: payload.sourceUrl,
+    originalName: payload.originalName,
+    originalMimeType: payload.originalMimeType,
+    originalBytes: payload.originalBytes,
+    previewUrl: payload.previewUrl,
+    thumbnailUrl: payload.thumbnailUrl,
+    previewMimeType: payload.previewMimeType,
+    previewBytes: payload.previewBytes,
+    storagePath: payload.storagePath,
+    thumbnailStoragePath: payload.thumbnailStoragePath,
+    mimeType: payload.mimeType,
+    width: payload.width,
+    height: payload.height,
+    pageNumber: payload.pageNumber,
+    pageCount: payload.pageCount,
+    status: payload.status ?? 'idle',
+    storageHint: payload.storageHint,
+    metadata: payload.metadata,
+    createdAt: payload.createdAt,
+    updatedAt: payload.updatedAt,
+  };
+
+  await saveReview({
+    ...review,
+    assets: review.assets.map((candidate) =>
+      candidate.id === assetId ? { ...candidate, versions: [...candidate.versions, version] } : candidate
+    ),
+  });
+  return version;
+}
+
+export async function updateAssetVersion(review: ReviewData, assetVersionId: string, payload: Partial<AssetVersion>): Promise<AssetVersion> {
+  const asset = findAssetForVersion(review, assetVersionId);
+  const existingVersion = asset?.versions.find((version) => version.id === assetVersionId);
+  if (!asset || !existingVersion) throw new Error('Asset version not found.');
+
+  const nextVersion = { ...existingVersion, ...payload, id: assetVersionId, assetId: asset.id };
+  await saveReview({
+    ...review,
+    assets: review.assets.map((candidate) =>
+      candidate.id === asset.id
+        ? { ...candidate, versions: candidate.versions.map((version) => (version.id === assetVersionId ? nextVersion : version)) }
+        : candidate
+    ),
+  });
+  return nextVersion;
+}
+
+export async function deleteAssetVersion(review: ReviewData, assetVersionId: string): Promise<void> {
+  const nextReview = {
+    ...review,
+    assets: review.assets.map((asset) => ({
+      ...asset,
+      versions: asset.versions.filter((version) => version.id !== assetVersionId),
+    })),
+    comments: review.comments.filter((comment) => comment.assetVersionId !== assetVersionId),
+    selectedAssetVersionId: review.selectedAssetVersionId === assetVersionId ? null : review.selectedAssetVersionId,
+    selectedDirection: review.selectedDirection === assetVersionId ? null : review.selectedDirection,
+  };
+
+  if (isSupabaseConfigured()) {
+    const client = createSupabaseClientInstance();
+    if (client) {
+      const { error } = await client.from(ASSET_VERSION_TABLE).delete().eq('id', assetVersionId).eq('review_id', review.id);
+      if (error) {
+        console.warn('Failed to delete asset version row from Supabase. Apply the asset_versions migration to enable structured version deletes:', error.message);
+      }
+    }
+  }
+
+  await saveReview(nextReview);
+}
+
+export async function attachPreviewToAssetVersion(review: ReviewData, assetVersionId: string, payload: Partial<AssetVersion>): Promise<AssetVersion> {
+  return updateAssetVersion(review, assetVersionId, payload);
+}
+
 export async function saveComment(review: ReviewData, comment: Comment): Promise<void> {
   if (!isSupabaseConfigured()) {
     return;
@@ -672,12 +954,13 @@ export async function saveComment(review: ReviewData, comment: Comment): Promise
     return;
   }
 
-  const optionId = findOptionIdForAsset(review, comment.assetId);
-  const { error } = await client.from(COMMENT_TABLE).insert({
+  const assetVersionId = comment.assetVersionId ?? findAssetVersionIdForAsset(review, comment.assetId);
+  const commentRow = {
     id: comment.id,
     review_id: review.id,
     asset_id: comment.assetId,
-    option_id: optionId,
+    asset_version_id: assetVersionId,
+    option_id: null,
     parent_comment_id: null,
     author_name: comment.author,
     author_role: comment.authorRole ?? 'reviewer',
@@ -686,11 +969,19 @@ export async function saveComment(review: ReviewData, comment: Comment): Promise
     y_percent: comment.y ?? null,
     page_number: comment.pageNumber ?? null,
     status: 'open',
-  });
+  };
+
+  const { error } = await client.from(COMMENT_TABLE).insert(commentRow);
 
   if (error) {
-    console.error('Failed to save comment to Supabase:', error.message);
-    throw new Error(`Failed to save comment: ${error.message}`);
+    console.warn('Falling back to legacy comment insert:', error.message);
+    const { asset_version_id: _assetVersionId, ...legacyCommentRow } = commentRow;
+    const legacyResult = await client.from(COMMENT_TABLE).insert(legacyCommentRow);
+
+    if (legacyResult.error) {
+      console.error('Failed to save comment to Supabase:', legacyResult.error.message);
+      throw new Error(`Failed to save comment: ${legacyResult.error.message}`);
+    }
   }
 }
 
@@ -704,7 +995,8 @@ export async function saveCommentReply(input: CommentReplyInput): Promise<Commen
     id: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `reply-${Date.now()}`,
     reviewId: input.review.id,
     assetId: parentComment.assetId,
-    optionId: parentComment.optionId ?? findOptionIdForAsset(input.review, parentComment.assetId),
+    assetVersionId: parentComment.assetVersionId ?? findAssetVersionIdForAsset(input.review, parentComment.assetId),
+    optionId: null,
     parentCommentId: input.parentCommentId,
     text: input.body,
     author: input.authorName,
@@ -724,21 +1016,30 @@ export async function saveCommentReply(input: CommentReplyInput): Promise<Commen
     return reply;
   }
 
-  const { error } = await client.from(COMMENT_TABLE).insert({
+  const replyRow = {
     id: reply.id,
     review_id: input.review.id,
     asset_id: reply.assetId,
-    option_id: reply.optionId ?? null,
+    asset_version_id: reply.assetVersionId ?? null,
+    option_id: null,
     parent_comment_id: input.parentCommentId,
     author_name: input.authorName,
     author_role: input.authorRole,
     body: input.body,
     status: 'open',
-  });
+  };
+
+  const { error } = await client.from(COMMENT_TABLE).insert(replyRow);
 
   if (error) {
-    console.error('Failed to save comment reply to Supabase:', error.message);
-    throw new Error(`Failed to save reply: ${error.message}`);
+    console.warn('Falling back to legacy reply insert:', error.message);
+    const { asset_version_id: _assetVersionId, ...legacyReplyRow } = replyRow;
+    const legacyResult = await client.from(COMMENT_TABLE).insert(legacyReplyRow);
+
+    if (legacyResult.error) {
+      console.error('Failed to save comment reply to Supabase:', legacyResult.error.message);
+      throw new Error(`Failed to save reply: ${legacyResult.error.message}`);
+    }
   }
 
   return reply;
@@ -837,17 +1138,26 @@ export async function saveReviewerDecision(input: ReviewerDecisionInput): Promis
     ? crypto.randomUUID()
     : `decision-${Date.now()}`;
 
-  const { error } = await client.from(DECISION_TABLE).insert({
+  const decisionRow = {
     id: decisionId,
     review_id: input.reviewId,
-    option_id: input.optionId ?? null,
+    asset_version_id: input.assetVersionId ?? null,
+    option_id: null,
     reviewer_name: input.reviewerName,
     type: input.type,
     note: input.note,
-  });
+  };
+
+  const { error } = await client.from(DECISION_TABLE).insert(decisionRow);
 
   if (error) {
-    console.error('Failed to save reviewer decision to Supabase:', error.message);
-    throw new Error(`Failed to save decision: ${error.message}`);
+    console.warn('Falling back to legacy decision insert:', error.message);
+    const { asset_version_id: _assetVersionId, ...legacyDecisionRow } = decisionRow;
+    const legacyResult = await client.from(DECISION_TABLE).insert(legacyDecisionRow);
+
+    if (legacyResult.error) {
+      console.error('Failed to save reviewer decision to Supabase:', legacyResult.error.message);
+      throw new Error(`Failed to save decision: ${legacyResult.error.message}`);
+    }
   }
 }

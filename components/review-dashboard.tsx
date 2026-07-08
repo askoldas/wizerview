@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { createReview, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
+import { createReview, deleteReview, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
 import { createSupabaseClientInstance } from '@/lib/supabase';
 
 function getInitials(email?: string | null) {
@@ -38,6 +38,7 @@ export function ReviewDashboard() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [deletingReviewId, setDeletingReviewId] = useState<string | null>(null);
   const [isSendingLogin, setIsSendingLogin] = useState(false);
   const [email, setEmail] = useState('');
   const [message, setMessage] = useState<string | null>(null);
@@ -196,6 +197,29 @@ export function ReviewDashboard() {
     setMessage('Review link copied.');
   };
 
+  const handleDeleteReview = async (review: ReviewSummary) => {
+    if (!user) {
+      setMessage('Sign in to delete reviews.');
+      return;
+    }
+
+    const confirmed = window.confirm(`Delete "${review.title}"? This removes the review, assets, versions, comments, feedback, and decisions.`);
+    if (!confirmed) return;
+
+    setDeletingReviewId(review.id);
+    setMessage(null);
+
+    try {
+      await deleteReview(review.id);
+      setReviews((current) => current.filter((candidate) => candidate.id !== review.id));
+      setMessage('Review deleted.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not delete review.');
+    } finally {
+      setDeletingReviewId(null);
+    }
+  };
+
   const activityText = (review: ReviewSummary) => {
     const parts = [`${review.openComments} open comments`, `${review.resolvedComments} resolved`];
     if (review.newComments > 0) parts.push(`${review.newComments} new comments`);
@@ -334,6 +358,9 @@ export function ReviewDashboard() {
                   <div className="flex items-center gap-2 md:justify-end">
                     <button type="button" onClick={() => void copyReviewLink(review)} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
                       Share
+                    </button>
+                    <button type="button" onClick={() => void handleDeleteReview(review)} disabled={deletingReviewId === review.id} className="rounded-[8px] border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60">
+                      {deletingReviewId === review.id ? 'Deleting...' : 'Delete'}
                     </button>
                     <button type="button" onClick={() => void handleOpenReview(review.id)} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
                       Open
