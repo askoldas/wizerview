@@ -10,9 +10,16 @@ import { estimateStorageSavings, processImagePreview, processPdfPreview } from '
 import type { Asset, Comment, ReviewData, ReviewOption, ShareSettings } from '@/lib/mock-data';
 import {
   createEmptyReviewData,
-  loadReview,
+  getReviewShareToken,
+  getOpenCommentCount,
+  getResolvedCommentCount,
+  loadReviewById,
+  loadReviewByShareToken,
   markReviewSeen,
+  reopenComment,
+  resolveComment,
   saveComment,
+  saveCommentReply,
   saveReview,
   saveReviewerDecision,
   saveReviewerFeedback,
@@ -24,7 +31,8 @@ export type ReviewWorkspaceMode = 'creator' | 'client';
 
 interface ReviewWorkspaceProps {
   mode: ReviewWorkspaceMode;
-  reviewId: string;
+  reviewId?: string;
+  shareToken?: string;
   initialReview?: ReviewData;
 }
 
@@ -40,10 +48,11 @@ function formatByteSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspaceProps) {
+export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: ReviewWorkspaceProps) {
   const isCreator = mode === 'creator';
   const supabase = useMemo(() => createSupabaseClientInstance(), []);
-  const fallbackReview = useMemo(() => initialReview ?? createEmptyReviewData(reviewId), [initialReview, reviewId]);
+  const fallbackReviewId = reviewId ?? `shared-${shareToken ?? 'review'}`;
+  const fallbackReview = useMemo(() => initialReview ?? createEmptyReviewData(fallbackReviewId), [fallbackReviewId, initialReview]);
 
   const [review, setReview] = useState<ReviewData>(fallbackReview);
   const [activeOptionId, setActiveOptionId] = useState(fallbackReview.options[0]?.id ?? '');
@@ -51,6 +60,8 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [activePdfPage, setActivePdfPage] = useState(1);
   const [rightTab, setRightTab] = useState<'notes' | 'feedback'>('notes');
+  const [commentFilter, setCommentFilter] = useState<'all' | 'open' | 'resolved'>('all');
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [showPins, setShowPins] = useState(true);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -101,7 +112,9 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
   useEffect(() => {
     let ignored = false;
 
-    loadReview(reviewId).then((loaded) => {
+    const loader = shareToken ? loadReviewByShareToken(shareToken) : loadReviewById(fallbackReviewId);
+
+    loader.then((loaded) => {
       if (ignored) return;
       const firstOption = loaded.options[0];
 
@@ -115,16 +128,17 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
     return () => {
       ignored = true;
     };
-  }, [reviewId]);
+  }, [fallbackReviewId, shareToken]);
 
   const activeOption = review.options.find((option) => option.id === activeOptionId) ?? review.options[0];
   const activeOptionIndex = Math.max(0, review.options.findIndex((option) => option.id === activeOption?.id));
   const activeAsset = activeOption?.assets.find((asset) => asset.id === activeAssetId) ?? activeOption?.assets[0];
-  const assetComments = review.comments.filter((comment) => comment.assetId === activeAsset?.id);
-  const totalComments = review.comments.length;
+  const assetComments = review.comments.filter((comment) => comment.assetId === activeAsset?.id && !comment.parentCommentId);
+  const filteredAssetComments = assetComments.filter((comment) => commentFilter === 'all' || (comment.status ?? 'open') === commentFilter);
+  const openCommentCount = getOpenCommentCount(review.comments);
+  const resolvedCommentCount = getResolvedCommentCount(review.comments);
+  const totalComments = review.comments.filter((comment) => !comment.parentCommentId).length;
   const hasMultipleVersions = review.options.length > 1;
-  const shareLink = typeof window !== 'undefined' ? `${window.location.origin}/review/${review.id}` : `/review/${review.id}`;
-
   const shareSummary = useMemo(() => {
     const parts = [review.shareSettings.reviewerNameRequired ? 'name required' : 'name optional'];
     if (review.shareSettings.pinProtection) parts.push('PIN');
@@ -175,12 +189,28 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
   };
 
   const copyReviewLink = async () => {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) {
-      setSaveMessage(shareLink);
+    let token = review.shareToken ?? null;
+
+    if (!token && isCreator) {
+      token = await getReviewShareToken(review.id);
+      if (token) {
+        setReview((current) => ({ ...current, shareToken: token ?? undefined }));
+      }
+    }
+
+    if (!token) {
+      setSaveMessage('No share token is available for this review.');
       return;
     }
 
-    await navigator.clipboard.writeText(shareLink);
+    const nextShareLink = typeof window !== 'undefined' ? `${window.location.origin}/r/${token}` : `/r/${token}`;
+
+    if (typeof navigator === 'undefined' || !navigator.clipboard) {
+      setSaveMessage(nextShareLink);
+      return;
+    }
+
+    await navigator.clipboard.writeText(nextShareLink);
     setSaveMessage('Review link copied.');
   };
 
@@ -349,6 +379,35 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
     setActiveCommentId(null);
   };
 
+  const addReplyToState = (parentCommentId: string, reply: Comment) => {
+    setReview((current) => ({
+      ...current,
+      comments: current.comments.map((comment) =>
+        comment.id === parentCommentId
+          ? { ...comment, replies: [...(comment.replies ?? []), reply] }
+          : comment
+      ),
+    }));
+  };
+
+  const updateCommentStatusInState = (commentId: string, status: 'open' | 'resolved', resolvedBy?: string | null) => {
+    const now = new Date().toISOString();
+    setReview((current) => ({
+      ...current,
+      comments: current.comments.map((comment) =>
+        comment.id === commentId
+          ? {
+              ...comment,
+              status,
+              resolvedAt: status === 'resolved' ? now : null,
+              resolvedBy: status === 'resolved' ? resolvedBy ?? 'Creator' : null,
+              updatedAt: now,
+            }
+          : comment
+      ),
+    }));
+  };
+
   const persistComment = (comment: Comment) => {
     setReview((current) => {
       const nextReview = { ...current, comments: [...current.comments, comment] };
@@ -361,6 +420,11 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
   };
 
   const handleAddComment = (assetId: string, x: number, y: number, text: string, author: string) => {
+    if (!isCreator && !review.shareSettings.allowComments) {
+      setSaveMessage('Comments are disabled for this review.');
+      return;
+    }
+
     if (!requireName()) {
       setPendingComment({ assetId, x, y, text, author });
       return;
@@ -368,13 +432,70 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
 
     persistComment({
       id: `comment-${Date.now()}`,
+      reviewId: review.id,
       assetId,
       x,
       y,
       text,
       author: isCreator ? 'Creator' : author || reviewerName || 'Reviewer',
+      authorRole: isCreator ? 'creator' : 'reviewer',
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      replies: [],
     });
     setPendingComment(null);
+  };
+
+  const handleReplySubmit = async (commentId: string) => {
+    if (!isCreator && !review.shareSettings.allowComments) {
+      setSaveMessage('Replies are disabled for this review.');
+      return;
+    }
+
+    if (!requireName()) return;
+
+    const body = replyDrafts[commentId]?.trim();
+    if (!body) return;
+
+    try {
+      const reply = await saveCommentReply({
+        review,
+        parentCommentId: commentId,
+        body,
+        authorName: isCreator ? 'Creator' : reviewerName || 'Reviewer',
+        authorRole: isCreator ? 'creator' : 'reviewer',
+      });
+      addReplyToState(commentId, reply);
+      setReplyDrafts((current) => ({ ...current, [commentId]: '' }));
+      setSaveMessage('Reply saved.');
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : 'Could not save reply.');
+    }
+  };
+
+  const handleResolveComment = async (commentId: string) => {
+    if (!isCreator) return;
+
+    try {
+      await resolveComment({ reviewId: review.id, commentId, resolvedBy: authUser?.email ?? 'Creator' });
+      updateCommentStatusInState(commentId, 'resolved', authUser?.email ?? 'Creator');
+      setSaveMessage('Comment resolved.');
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : 'Could not resolve comment.');
+    }
+  };
+
+  const handleReopenComment = async (commentId: string) => {
+    if (!isCreator) return;
+
+    try {
+      await reopenComment({ reviewId: review.id, commentId, resolvedBy: authUser?.email ?? 'Creator' });
+      updateCommentStatusInState(commentId, 'open', null);
+      setSaveMessage('Comment reopened.');
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : 'Could not reopen comment.');
+    }
   };
 
   const handleNameSubmit = () => {
@@ -389,11 +510,21 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
   };
 
   const handleFeedbackChange = (value: string) => {
+    if (!isCreator && !review.shareSettings.allowComments) {
+      setSaveMessage('Feedback is disabled for this review.');
+      return;
+    }
+
     if (!requireName()) return;
     setReview((current) => ({ ...current, overallFeedback: value }));
   };
 
   const handleSaveFeedback = async () => {
+    if (!review.shareSettings.allowComments) {
+      setSaveMessage('Feedback is disabled for this review.');
+      return;
+    }
+
     if (!requireName()) return;
     if (!review.overallFeedback.trim()) return;
 
@@ -410,6 +541,11 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
   };
 
   const persistDecision = async (type: ReviewerDecisionType, note: string, optionId?: string | null) => {
+    if (!review.shareSettings.allowDecisions) {
+      setSaveMessage('Decisions are disabled for this review.');
+      return;
+    }
+
     try {
       await saveReviewerDecision({
         reviewId: review.id,
@@ -504,7 +640,7 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
           <div className="flex flex-wrap items-center gap-2">
             {isCreator ? (
               <>
-                <Link href={`/review/${review.id}`} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Preview client view</Link>
+                <Link href={review.shareToken ? `/r/${review.shareToken}` : `/review/${review.id}`} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Preview client view</Link>
                 <button type="button" onClick={() => void copyReviewLink()} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Copy review link</button>
                 <button type="button" onClick={handleSaveReview} disabled={isSaving || isCheckingAuth || (isSupabaseConfigured() && !authUser)} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60">
                   {isSaving ? 'Saving...' : 'Save'}
@@ -564,7 +700,7 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
                 <button type="button" onClick={addVersion} className="rounded-[8px] border border-dashed border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">+ Add version</button>
               ) : null}
             </div>
-            <p className="text-sm text-stone-500">Click the preview to add a pinned note.</p>
+            <p className="text-sm text-stone-500">{isCreator || review.shareSettings.allowComments ? 'Click the preview to add a pinned note.' : 'Pinned notes are disabled for this review.'}</p>
           </div>
 
           <div className="mt-5">
@@ -582,7 +718,7 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
               {activeAsset ? (
                 <>
                   <AssetSurface asset={activeAsset} />
-                  {showPins ? (
+                  {showPins && (isCreator || review.shareSettings.allowComments) ? (
                     <PinCommentLayer
                       asset={activeAsset}
                       comments={review.comments}
@@ -625,42 +761,95 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
 
           {rightTab === 'notes' ? (
             <div className="mt-4 space-y-3">
-              {assetComments.length > 0 ? assetComments.map((comment, index) => (
-                <button
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { key: 'all' as const, label: `All ${assetComments.length}` },
+                  { key: 'open' as const, label: `Open ${assetComments.filter((comment) => (comment.status ?? 'open') === 'open').length}` },
+                  { key: 'resolved' as const, label: `Resolved ${assetComments.filter((comment) => comment.status === 'resolved').length}` },
+                ].map((filter) => (
+                  <button
+                    key={filter.key}
+                    type="button"
+                    onClick={() => setCommentFilter(filter.key)}
+                    className={`rounded-[8px] px-2.5 py-1.5 text-xs font-semibold ${commentFilter === filter.key ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-600'}`}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
+
+              <p className="text-xs text-stone-500">{openCommentCount} open comments / {resolvedCommentCount} resolved across this review</p>
+
+              {filteredAssetComments.length > 0 ? filteredAssetComments.map((comment, index) => (
+                <article
                   key={comment.id}
-                  type="button"
-                  onClick={() => setActiveCommentId(comment.id)}
-                  className={`w-full rounded-[10px] border px-3 py-2.5 text-left text-sm ${activeCommentId === comment.id ? 'border-stone-950 bg-stone-950 text-white' : 'border-stone-200 bg-stone-50 text-stone-700 hover:bg-stone-100'}`}
+                  className={`rounded-[10px] border px-3 py-2.5 text-sm ${activeCommentId === comment.id ? 'border-stone-950 bg-stone-950 text-white' : comment.status === 'resolved' ? 'border-stone-200 bg-stone-50 text-stone-500' : 'border-stone-200 bg-white text-stone-700'}`}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium">{comment.author}</span>
-                    <span className="text-xs uppercase tracking-[0.18em]">Pin {index + 1}</span>
-                  </div>
-                  <p className="mt-1 text-sm">{comment.text}</p>
-                  {isCreator ? (
-                    <div className="mt-3 flex items-center gap-2 text-xs">
-                      <span className="rounded-full bg-white/20 px-2 py-1">Open</span>
-                      <span>Resolve</span>
-                      <span>Reply</span>
+                  <button type="button" onClick={() => setActiveCommentId(comment.id)} className="block w-full text-left">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-medium">{comment.author}</span>
+                      <span className="text-xs uppercase tracking-[0.18em]">Pin {index + 1}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                      <span className={`rounded-full px-2 py-0.5 ${comment.status === 'resolved' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{comment.status === 'resolved' ? 'Resolved' : 'Open'}</span>
+                      <span>{comment.authorRole === 'creator' ? 'Creator' : 'Reviewer'}</span>
+                      {comment.createdAt ? <span>{new Date(comment.createdAt).toLocaleDateString()}</span> : null}
+                    </div>
+                    <p className="mt-2 text-sm">{comment.text}</p>
+                  </button>
+
+                  {(comment.replies ?? []).length > 0 ? (
+                    <div className={`mt-3 space-y-2 border-l pl-3 ${activeCommentId === comment.id ? 'border-white/30' : 'border-stone-200'}`}>
+                      {(comment.replies ?? []).map((reply) => (
+                        <div key={reply.id} className="text-sm">
+                          <div className="flex flex-wrap items-center gap-2 text-xs opacity-80">
+                            <span className="font-semibold">{reply.author}</span>
+                            <span>{reply.authorRole === 'creator' ? 'Creator' : 'Reviewer'}</span>
+                            {reply.createdAt ? <span>{new Date(reply.createdAt).toLocaleDateString()}</span> : null}
+                          </div>
+                          <p className="mt-1">{reply.text}</p>
+                        </div>
+                      ))}
                     </div>
                   ) : null}
-                </button>
+
+                  {(isCreator || review.shareSettings.allowComments) ? (
+                    <div className="mt-3 grid gap-2">
+                      <textarea
+                        value={replyDrafts[comment.id] ?? ''}
+                        onChange={(event) => setReplyDrafts((current) => ({ ...current, [comment.id]: event.target.value }))}
+                        placeholder="Reply to this thread"
+                        className="min-h-16 rounded-[8px] border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => void handleReplySubmit(comment.id)} className="rounded-[8px] border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700">Reply</button>
+                        {isCreator && (comment.status ?? 'open') === 'open' ? (
+                          <button type="button" onClick={() => void handleResolveComment(comment.id)} className="rounded-[8px] bg-stone-950 px-3 py-1.5 text-xs font-semibold text-white">Resolve</button>
+                        ) : null}
+                        {isCreator && comment.status === 'resolved' ? (
+                          <button type="button" onClick={() => void handleReopenComment(comment.id)} className="rounded-[8px] border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700">Reopen</button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
               )) : (
-                <p className="rounded-[10px] border border-dashed border-stone-300 bg-stone-50 px-3 py-3 text-sm text-stone-600">Click the preview to add a pinned note.</p>
+                <p className="rounded-[10px] border border-dashed border-stone-300 bg-stone-50 px-3 py-3 text-sm text-stone-600">{review.shareSettings.allowComments || isCreator ? 'Click the preview to add a pinned note.' : 'Comments are disabled for this review.'}</p>
               )}
             </div>
           ) : (
             <div className="mt-4">
               <FeedbackPanel value={review.overallFeedback} onChange={handleFeedbackChange} label="Overall feedback" />
-              {!isCreator ? (
+              {!isCreator && review.shareSettings.allowComments ? (
                 <button type="button" onClick={handleSaveFeedback} className="mt-3 rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save feedback</button>
               ) : null}
+              {!isCreator && !review.shareSettings.allowComments ? <p className="mt-3 text-sm text-stone-500">Feedback is disabled for this review.</p> : null}
             </div>
           )}
 
           <div className="mt-5 border-t border-stone-200 pt-5">
             <p className="text-sm font-semibold text-stone-950">Final decision</p>
-            {!isCreator ? (
+            {!isCreator && review.shareSettings.allowDecisions ? (
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" onClick={() => handleDecisionChange('Approve', 'approved')} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Approve</button>
                 <button type="button" onClick={() => handleDecisionChange('Request changes', 'changes_requested')} className="rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">Request changes</button>
@@ -671,8 +860,10 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
                   </>
                 ) : null}
               </div>
-            ) : (
+            ) : isCreator ? (
               <p className="mt-2 text-sm text-stone-600">{review.decision || 'Awaiting client decision.'}</p>
+            ) : (
+              <p className="mt-2 text-sm text-stone-500">Decision actions are disabled for this review.</p>
             )}
             {review.decision ? <div className="mt-3 rounded-[10px] border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{review.decision}</div> : null}
           </div>
@@ -724,7 +915,7 @@ export function ReviewWorkspace({ mode, reviewId, initialReview }: ReviewWorkspa
             </>
           ) : (
             <>
-              <button type="button" onClick={() => setRightTab('feedback')} className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">Add general comment</button>
+              {review.shareSettings.allowComments ? <button type="button" onClick={() => setRightTab('feedback')} className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">Add general comment</button> : null}
               <button type="button" className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">Download</button>
               <button type="button" onClick={() => void copyReviewLink()} className="rounded-[8px] bg-stone-950 px-3 py-1.5 font-semibold text-white">Share review link</button>
             </>

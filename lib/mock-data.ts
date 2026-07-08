@@ -26,11 +26,22 @@ export interface Asset {
 
 export interface Comment {
   id: string;
+  reviewId?: string;
+  optionId?: string | null;
   assetId: string;
-  x: number;
-  y: number;
+  parentCommentId?: string | null;
+  x?: number;
+  y?: number;
+  pageNumber?: number | null;
   text: string;
   author: string;
+  authorRole?: 'creator' | 'reviewer';
+  status?: 'open' | 'resolved';
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  replies?: Comment[];
 }
 
 export interface ReviewOption {
@@ -50,6 +61,7 @@ export interface ShareSettings {
 
 export interface ReviewData {
   id: string;
+  shareToken?: string;
   title: string;
   client: string;
   instructions: string;
@@ -124,6 +136,21 @@ export const initialReview: ReviewData = {
       y: 36,
       text: 'The hero area feels confident without being loud.',
       author: 'Mina',
+      authorRole: 'reviewer',
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      replies: [
+        {
+          id: 'comment-1-reply-1',
+          assetId: 'desktop-home',
+          parentCommentId: 'comment-1',
+          text: 'Agreed. I can keep this direction and tighten the CTA spacing.',
+          author: 'Creator',
+          authorRole: 'creator',
+          status: 'open',
+          createdAt: new Date().toISOString(),
+        },
+      ],
     },
     {
       id: 'comment-2',
@@ -132,6 +159,10 @@ export const initialReview: ReviewData = {
       y: 54,
       text: 'The supporting page feels a little too dense.',
       author: 'Jules',
+      authorRole: 'reviewer',
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      replies: [],
     },
   ],
 };
@@ -162,7 +193,13 @@ export function normalizeReviewData(review: ReviewData | LegacyReviewData): Revi
   return {
     ...normalized,
     options: getReviewOptions(review),
-    comments: normalized.comments ?? [],
+    comments: (normalized.comments ?? []).map((comment) => ({
+      ...comment,
+      authorRole: comment.authorRole ?? 'reviewer',
+      status: comment.status ?? 'open',
+      parentCommentId: comment.parentCommentId ?? null,
+      replies: comment.replies ?? [],
+    })),
     overallFeedback: normalized.overallFeedback ?? '',
     decision: normalized.decision ?? '',
     selectedDirection: normalized.selectedDirection ?? null,

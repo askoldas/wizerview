@@ -57,5 +57,7 @@ The prototype includes:
 - [Technical Stack](docs/technical-stack.md)
 - [Pricing Strategy](docs/pricing-strategy.md)
 - [Asset Processing and Preview Storage](docs/asset-processing.md)
+- [Share Links and Reviewer Permissions](docs/share-links-and-permissions.md)
+- [Comment Lifecycle](docs/comment-lifecycle.md)
 - [Codex Prototype Prompt](docs/codex-prototype-prompt.md)
 - [Agent Instructions](AGENTS.md)

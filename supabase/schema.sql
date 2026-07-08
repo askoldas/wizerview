@@ -119,7 +119,10 @@ create table if not exists public.comments (
   y_percent numeric(5,2),
   page_number integer,
   status text not null default 'open' check (status in ('open', 'resolved')),
-  created_at timestamptz not null default now()
+  resolved_at timestamptz,
+  resolved_by text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 alter table public.comments add column if not exists review_id text references public.reviews(id) on delete cascade;
@@ -133,7 +136,10 @@ alter table public.comments add column if not exists x_percent numeric(5,2);
 alter table public.comments add column if not exists y_percent numeric(5,2);
 alter table public.comments add column if not exists page_number integer;
 alter table public.comments add column if not exists status text not null default 'open';
+alter table public.comments add column if not exists resolved_at timestamptz;
+alter table public.comments add column if not exists resolved_by text;
 alter table public.comments add column if not exists created_at timestamptz not null default now();
+alter table public.comments add column if not exists updated_at timestamptz not null default now();
 
 create table if not exists public.decisions (
   id text primary key,
@@ -165,6 +171,34 @@ alter table public.review_feedback add column if not exists reviewer_name text n
 alter table public.review_feedback add column if not exists body text not null default '';
 alter table public.review_feedback add column if not exists created_at timestamptz not null default now();
 
+create or replace function public.sync_review_status_from_decision()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.reviews
+  set status = case new.type
+      when 'approved' then 'approved'
+      when 'changes_requested' then 'changes_requested'
+      when 'direction_selected' then 'direction_selected'
+      when 'combine_options' then 'changes_requested'
+      else status
+    end,
+    updated_at = now()
+  where id = new.review_id
+    and status not in ('draft', 'archived');
+
+  return new;
+end;
+$$;
+
+drop trigger if exists sync_review_status_from_decision_trigger on public.decisions;
+create trigger sync_review_status_from_decision_trigger
+after insert on public.decisions
+for each row execute function public.sync_review_status_from_decision();
+
 alter table public.projects enable row level security;
 alter table public.reviews enable row level security;
 alter table public.review_options enable row level security;
@@ -172,6 +206,14 @@ alter table public.assets enable row level security;
 alter table public.comments enable row level security;
 alter table public.decisions enable row level security;
 alter table public.review_feedback enable row level security;
+
+drop policy if exists "Shared active reviews can save feedback snapshot" on public.reviews;
+drop policy if exists "Shared active reviews can sync options" on public.review_options;
+drop policy if exists "Shared active reviews can update options" on public.review_options;
+drop policy if exists "Shared active reviews can sync assets" on public.assets;
+drop policy if exists "Shared active reviews can update assets" on public.assets;
+drop policy if exists "Anyone with visible review can update own comment row" on public.comments;
+drop policy if exists "Anyone with visible review can comment" on public.comments;
 
 do $$
 begin
@@ -187,18 +229,12 @@ begin
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'reviews' and policyname = 'Shared reviews are readable') then
     create policy "Shared reviews are readable" on public.reviews
-      for select using (status <> 'draft');
-  end if;
-
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'reviews' and policyname = 'Shared active reviews can save feedback snapshot') then
-    create policy "Shared active reviews can save feedback snapshot" on public.reviews
-      for update using (status not in ('draft', 'approved', 'archived') and (allow_comments or allow_decisions))
-      with check (status <> 'draft');
+      for select using (status not in ('draft', 'archived'));
   end if;
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'review_options' and policyname = 'Visible options belong to visible reviews') then
     create policy "Visible options belong to visible reviews" on public.review_options
-      for select using (exists (select 1 from public.reviews where reviews.id = review_options.review_id and reviews.status <> 'draft'));
+      for select using (exists (select 1 from public.reviews where reviews.id = review_options.review_id and reviews.status not in ('draft', 'archived')));
   end if;
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'review_options' and policyname = 'Creators manage options') then
@@ -207,20 +243,9 @@ begin
       with check (exists (select 1 from public.reviews where reviews.id = review_options.review_id and reviews.owner_id = auth.uid()));
   end if;
 
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'review_options' and policyname = 'Shared active reviews can sync options') then
-    create policy "Shared active reviews can sync options" on public.review_options
-      for insert with check (exists (select 1 from public.reviews where reviews.id = review_options.review_id and reviews.status not in ('draft', 'approved', 'archived')));
-  end if;
-
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'review_options' and policyname = 'Shared active reviews can update options') then
-    create policy "Shared active reviews can update options" on public.review_options
-      for update using (exists (select 1 from public.reviews where reviews.id = review_options.review_id and reviews.status not in ('draft', 'approved', 'archived')))
-      with check (exists (select 1 from public.reviews where reviews.id = review_options.review_id and reviews.status not in ('draft', 'approved', 'archived')));
-  end if;
-
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'assets' and policyname = 'Visible assets belong to visible reviews') then
     create policy "Visible assets belong to visible reviews" on public.assets
-      for select using (exists (select 1 from public.reviews where reviews.id = assets.review_id and reviews.status <> 'draft'));
+      for select using (exists (select 1 from public.reviews where reviews.id = assets.review_id and reviews.status not in ('draft', 'archived')));
   end if;
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'assets' and policyname = 'Creators manage assets') then
@@ -229,36 +254,30 @@ begin
       with check (exists (select 1 from public.reviews where reviews.id = assets.review_id and reviews.owner_id = auth.uid()));
   end if;
 
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'assets' and policyname = 'Shared active reviews can sync assets') then
-    create policy "Shared active reviews can sync assets" on public.assets
-      for insert with check (exists (select 1 from public.reviews where reviews.id = assets.review_id and reviews.status not in ('draft', 'approved', 'archived')));
-  end if;
-
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'assets' and policyname = 'Shared active reviews can update assets') then
-    create policy "Shared active reviews can update assets" on public.assets
-      for update using (exists (select 1 from public.reviews where reviews.id = assets.review_id and reviews.status not in ('draft', 'approved', 'archived')))
-      with check (exists (select 1 from public.reviews where reviews.id = assets.review_id and reviews.status not in ('draft', 'approved', 'archived')));
-  end if;
-
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'comments' and policyname = 'Visible comments belong to visible reviews') then
     create policy "Visible comments belong to visible reviews" on public.comments
-      for select using (exists (select 1 from public.reviews where reviews.id = comments.review_id and reviews.status <> 'draft'));
+      for select using (exists (select 1 from public.reviews where reviews.id = comments.review_id and reviews.status not in ('draft', 'archived')));
   end if;
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'comments' and policyname = 'Anyone with visible review can comment') then
     create policy "Anyone with visible review can comment" on public.comments
-      for insert with check (exists (select 1 from public.reviews where reviews.id = comments.review_id and reviews.status not in ('draft', 'approved', 'archived') and reviews.allow_comments));
+      for insert with check (
+        status = 'open'
+        and resolved_at is null
+        and resolved_by is null
+        and exists (select 1 from public.reviews where reviews.id = comments.review_id and reviews.status not in ('draft', 'approved', 'archived') and reviews.allow_comments)
+      );
   end if;
 
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'comments' and policyname = 'Anyone with visible review can update own comment row') then
-    create policy "Anyone with visible review can update own comment row" on public.comments
-      for update using (exists (select 1 from public.reviews where reviews.id = comments.review_id and reviews.status not in ('draft', 'approved', 'archived') and reviews.allow_comments))
-      with check (exists (select 1 from public.reviews where reviews.id = comments.review_id and reviews.status not in ('draft', 'approved', 'archived') and reviews.allow_comments));
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'comments' and policyname = 'Creators manage comments') then
+    create policy "Creators manage comments" on public.comments
+      for all using (exists (select 1 from public.reviews where reviews.id = comments.review_id and reviews.owner_id = auth.uid()))
+      with check (exists (select 1 from public.reviews where reviews.id = comments.review_id and reviews.owner_id = auth.uid()));
   end if;
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'decisions' and policyname = 'Visible decisions belong to visible reviews') then
     create policy "Visible decisions belong to visible reviews" on public.decisions
-      for select using (exists (select 1 from public.reviews where reviews.id = decisions.review_id and reviews.status <> 'draft'));
+      for select using (exists (select 1 from public.reviews where reviews.id = decisions.review_id and reviews.status not in ('draft', 'archived')));
   end if;
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'decisions' and policyname = 'Anyone with visible review can decide') then
@@ -268,7 +287,7 @@ begin
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'review_feedback' and policyname = 'Visible feedback belongs to visible reviews') then
     create policy "Visible feedback belongs to visible reviews" on public.review_feedback
-      for select using (exists (select 1 from public.reviews where reviews.id = review_feedback.review_id and reviews.status <> 'draft'));
+      for select using (exists (select 1 from public.reviews where reviews.id = review_feedback.review_id and reviews.status not in ('draft', 'archived')));
   end if;
 
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'review_feedback' and policyname = 'Anyone with visible review can leave feedback') then

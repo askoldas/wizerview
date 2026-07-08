@@ -179,8 +179,13 @@ export function ReviewDashboard() {
     router.push(`/review-builder/${reviewId}`);
   };
 
-  const copyReviewLink = async (reviewId: string) => {
-    const shareLink = typeof window !== 'undefined' ? `${window.location.origin}/review/${reviewId}` : `/review/${reviewId}`;
+  const copyReviewLink = async (review: ReviewSummary) => {
+    if (!review.shareToken) {
+      setMessage('No share token is available for this review.');
+      return;
+    }
+
+    const shareLink = typeof window !== 'undefined' ? `${window.location.origin}/r/${review.shareToken}` : `/r/${review.shareToken}`;
 
     if (typeof navigator === 'undefined' || !navigator.clipboard) {
       setMessage(shareLink);
@@ -192,9 +197,11 @@ export function ReviewDashboard() {
   };
 
   const activityText = (review: ReviewSummary) => {
-    const parts = [`${review.comments} comments`, `${review.feedback} feedback`];
+    const parts = [`${review.openComments} open comments`, `${review.resolvedComments} resolved`];
     if (review.newComments > 0) parts.push(`${review.newComments} new comments`);
     if (review.newFeedback > 0) parts.push(`${review.newFeedback} new feedback`);
+    if (review.feedback > 0) parts.push(`${review.feedback} feedback`);
+    if (review.decisions > 0) parts.push(`${review.decisions} decisions`);
     return parts.join(' / ');
   };
 
@@ -321,10 +328,11 @@ export function ReviewDashboard() {
                       ) : null}
                     </div>
                     <p className="mt-1 truncate text-xs text-stone-500">{activityText(review)}</p>
+                    <p className="mt-1 truncate text-xs text-stone-400">{review.latestActivityLabel} / {review.latestActivityAt}</p>
                   </div>
 
                   <div className="flex items-center gap-2 md:justify-end">
-                    <button type="button" onClick={() => void copyReviewLink(review.id)} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
+                    <button type="button" onClick={() => void copyReviewLink(review)} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
                       Share
                     </button>
                     <button type="button" onClick={() => void handleOpenReview(review.id)} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">

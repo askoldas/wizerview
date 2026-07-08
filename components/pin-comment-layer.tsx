@@ -34,12 +34,12 @@ export function PinCommentLayer({ asset, comments, onAddComment, activeCommentId
   return (
     <div className="absolute inset-0 cursor-crosshair" onClick={handleAddPin}>
       {comments
-        .filter((comment) => comment.assetId === asset.id)
+        .filter((comment) => comment.assetId === asset.id && !comment.parentCommentId && comment.x != null && comment.y != null)
         .map((comment, index) => (
           <button
             key={comment.id}
             className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white text-sm font-semibold text-white shadow-lg ${activeCommentId === comment.id ? 'bg-stone-950 ring-2 ring-amber-300' : 'bg-amber-600'}`}
-            style={{ left: `${comment.x}%`, top: `${comment.y}%` }}
+            style={{ left: `${comment.x ?? 0}%`, top: `${comment.y ?? 0}%` }}
             onClick={(event) => {
               event.stopPropagation();
               onSelectComment(comment.id);
