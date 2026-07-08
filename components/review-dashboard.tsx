@@ -4,9 +4,31 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { CreatorAuthPanel } from '@/components/creator-auth-panel';
 import { createReview, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
 import { createSupabaseClientInstance } from '@/lib/supabase';
+
+function getInitials(email?: string | null) {
+  if (!email) return 'WV';
+  return email
+    .split('@')[0]
+    .split(/[._-]/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join('') || 'WV';
+}
+
+function statusLabel(status: string) {
+  return status === 'Direction Selected' ? 'Version selected' : status;
+}
+
+function statusClasses(status: string) {
+  if (status === 'Approved') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
+  if (status === 'Draft') return 'bg-amber-50 text-amber-700 ring-amber-200';
+  if (status === 'Changes Requested') return 'bg-rose-50 text-rose-700 ring-rose-200';
+  if (status === 'Direction Selected') return 'bg-sky-50 text-sky-700 ring-sky-200';
+  return 'bg-stone-100 text-stone-700 ring-stone-200';
+}
 
 export function ReviewDashboard() {
   const router = useRouter();
@@ -16,8 +38,14 @@ export function ReviewDashboard() {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [isSendingLogin, setIsSendingLogin] = useState(false);
+  const [email, setEmail] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const lastUserId = useRef<string | null>(null);
+
+  const activeReviews = reviews.filter((review) => review.status !== 'Approved').length;
+  const newActivity = reviews.reduce((total, review) => total + review.newActivity, 0);
+  const approvedReviews = reviews.filter((review) => review.status === 'Approved').length;
 
   const loadReviews = async () => {
     setIsLoading(true);
@@ -45,6 +73,11 @@ export function ReviewDashboard() {
         setUser(data.user ?? null);
         lastUserId.current = data.user?.id ?? null;
         setIsAuthReady(true);
+      }
+    }).catch(() => {
+      if (!ignored) {
+        setIsAuthReady(true);
+        setIsLoading(false);
       }
     });
 
@@ -75,7 +108,40 @@ export function ReviewDashboard() {
     void loadReviews();
   }, [isAuthReady, user]);
 
+  const handleSendLoginLink = async () => {
+    if (!supabase) {
+      setMessage('Add Supabase environment variables before signing in.');
+      return;
+    }
+
+    setIsSendingLogin(true);
+    setMessage(null);
+
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
+      },
+    });
+
+    setMessage(error ? error.message : 'Check your email for the sign-in link.');
+    setIsSendingLogin(false);
+  };
+
+  const handleSignOut = async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setUser(null);
+    setReviews([]);
+    setMessage(null);
+  };
+
   const handleCreateReview = async () => {
+    if (!user) {
+      setMessage('Sign in to create a review.');
+      return;
+    }
+
     setIsCreating(true);
     setMessage(null);
 
@@ -89,7 +155,7 @@ export function ReviewDashboard() {
     }
   };
 
-  const handleEditReview = async (reviewId: string) => {
+  const handleOpenReview = async (reviewId: string) => {
     setMessage(null);
 
     try {
@@ -113,147 +179,161 @@ export function ReviewDashboard() {
     router.push(`/review-builder/${reviewId}`);
   };
 
-  const activeReviews = reviews.filter((review) => review.status !== 'Approved').length;
-  const activityCount = reviews.reduce((total, review) => total + review.totalActivity, 0);
-  const firstReviewId = reviews[0]?.id;
+  const copyReviewLink = async (reviewId: string) => {
+    const shareLink = typeof window !== 'undefined' ? `${window.location.origin}/review/${reviewId}` : `/review/${reviewId}`;
 
-  const activityLabel = (total: number, unseen: number, singular: string) => {
-    const label = total === 1 ? singular : `${singular}s`;
-    return unseen > 0 ? `${total} ${label} / ${unseen} new` : `${total} ${label}`;
+    if (typeof navigator === 'undefined' || !navigator.clipboard) {
+      setMessage(shareLink);
+      return;
+    }
+
+    await navigator.clipboard.writeText(shareLink);
+    setMessage('Review link copied.');
+  };
+
+  const activityText = (review: ReviewSummary) => {
+    const parts = [`${review.comments} comments`, `${review.feedback} feedback`];
+    if (review.newComments > 0) parts.push(`${review.newComments} new comments`);
+    if (review.newFeedback > 0) parts.push(`${review.newFeedback} new feedback`);
+    return parts.join(' / ');
   };
 
   return (
-    <main className="min-h-screen px-5 py-6 text-stone-950 lg:px-8">
-      <div className="mx-auto grid max-w-7xl gap-5 lg:grid-cols-[220px_1fr]">
-        <aside className="rounded-[14px] border border-stone-200 bg-white/85 p-4 shadow-sm">
-          <Link href="/" className="block text-lg font-semibold tracking-tight text-stone-950">
-            WizerView
-          </Link>
-          <nav className="mt-6 space-y-1 text-sm">
-            <Link href="/" className="flex items-center justify-between rounded-[10px] bg-stone-950 px-3 py-2.5 font-medium text-white">
-              Reviews
-              <span>{reviews.length}</span>
-            </Link>
-            <span className="flex items-center justify-between rounded-[10px] px-3 py-2.5 text-stone-500">
-              Projects
-              <span>1</span>
-            </span>
-            <span className="flex items-center justify-between rounded-[10px] px-3 py-2.5 text-stone-500">
-              Archive
-              <span>0</span>
-            </span>
-          </nav>
-          <div className="mt-6 rounded-[12px] border border-stone-200 bg-stone-50 p-3 text-sm text-stone-600">
-            <p className="font-medium text-stone-900">MVP focus</p>
-            <p className="mt-1">One shareable review link, visual assets, pinned notes, and a clear decision.</p>
+    <main className="flex min-h-screen flex-col bg-[#f5f3ee] text-stone-950">
+      <header className="sticky top-0 z-30 border-b border-stone-200 bg-white/95 px-4 py-3 backdrop-blur lg:px-6">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <Link href="/" className="text-base font-semibold tracking-tight text-stone-950">WizerView</Link>
+            <span className="h-5 w-px bg-stone-200" />
+            <span className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Review dashboard</span>
+            <h1 className="text-sm font-semibold text-stone-950 sm:text-base">Reviews</h1>
+            {message ? <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs text-stone-600">{message}</span> : null}
           </div>
-        </aside>
 
-        <section className="space-y-5">
-          <header className="rounded-[14px] border border-stone-200 bg-white p-5 shadow-sm">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-stone-500">Client review workspace</p>
-                <h1 className="mt-2 max-w-2xl text-3xl font-semibold tracking-tight text-stone-950">Review work where the work actually lives.</h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-stone-600">
-                  Share visual assets, collect pinned comments, compare directions, and get a decision without asking clients to create an account.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleCreateReview}
-                disabled={isCreating || !user}
-                className="inline-flex items-center justify-center rounded-[10px] bg-stone-950 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isCreating ? 'Creating...' : 'New review'}
-              </button>
-            </div>
-            {message ? <p className="mt-3 text-sm font-medium text-stone-600">{message}</p> : null}
-          </header>
-
-          <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
-            <div className="rounded-[14px] border border-stone-200 bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-stone-500">Shared links</p>
-                  <h2 className="text-lg font-semibold text-stone-950">Recent reviews</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            {user ? (
+              <>
+                <div className="flex items-center gap-2 rounded-[8px] bg-stone-100 px-2 py-1.5 text-sm text-stone-700">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-xs font-semibold text-stone-900 shadow-sm">{getInitials(user.email)}</span>
+                  <span className="max-w-[220px] truncate">{user.email}</span>
                 </div>
-                <button type="button" onClick={handleCreateReview} disabled={isCreating || !user} className="rounded-[10px] border border-stone-200 px-3 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60">
-                  Create
+                <button type="button" onClick={handleSignOut} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
+                  Log out
+                </button>
+              </>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="you@example.com"
+                  className="h-9 w-56 rounded-[8px] border border-stone-200 bg-white px-3 text-sm"
+                />
+                <button type="button" onClick={handleSendLoginLink} disabled={isSendingLogin || !email} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60">
+                  {isSendingLogin ? 'Sending...' : 'Email sign-in link'}
                 </button>
               </div>
+            )}
+            <button
+              type="button"
+              onClick={handleCreateReview}
+              disabled={isCreating || !user}
+              className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isCreating ? 'Creating...' : 'New review'}
+            </button>
+          </div>
+        </div>
+      </header>
 
-              <div className="mt-4 overflow-hidden rounded-[12px] border border-stone-200">
-                {isLoading ? (
-                  <div className="bg-white p-5 text-sm text-stone-600">Loading reviews...</div>
-                ) : reviews.length === 0 ? (
-                  <div className="bg-white p-5 text-sm text-stone-600">
-                    {user ? 'No Supabase reviews yet. Create the first one.' : 'Sign in to load your Supabase reviews.'}
-                  </div>
-                ) : (
-                  reviews.map((review, index) => (
-                    <article key={review.id} className={`grid gap-3 bg-white p-4 sm:grid-cols-[1fr_auto] sm:items-center ${index > 0 ? 'border-t border-stone-200' : ''}`}>
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h3 className="text-base font-semibold text-stone-950">{review.title}</h3>
-                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${review.status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : review.status === 'Draft' ? 'bg-amber-100 text-amber-800' : 'bg-stone-950 text-white'}`}>
-                            {review.status}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-sm text-stone-600">{review.client || 'No client yet'}</p>
-                        <p className="mt-2 text-xs uppercase tracking-[0.18em] text-stone-400">Updated {review.updatedAt}</p>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
-                        <span className={`rounded-[10px] px-3 py-2 text-sm ${review.newComments > 0 ? 'bg-amber-100 text-amber-900' : 'bg-stone-100 text-stone-600'}`}>
-                          {activityLabel(review.comments, review.newComments, 'comment')}
-                        </span>
-                        <span className={`rounded-[10px] px-3 py-2 text-sm ${review.newFeedback > 0 ? 'bg-amber-100 text-amber-900' : 'bg-stone-100 text-stone-600'}`}>
-                          {activityLabel(review.feedback, review.newFeedback, 'feedback')}
-                        </span>
-                        <button type="button" onClick={() => void handleEditReview(review.id)} className="rounded-[10px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-50">
-                          Edit
-                        </button>
-                        <Link href={`/review/${review.id}`} className="rounded-[10px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-800 hover:bg-stone-50">
-                          Open
-                        </Link>
-                      </div>
-                    </article>
-                  ))
-                )}
-              </div>
+      <div className="grid flex-1 lg:grid-cols-[176px_minmax(0,1fr)]">
+        <aside className="border-b border-stone-200 bg-stone-50/80 p-3 lg:border-b-0 lg:border-r">
+          <nav className="grid grid-cols-2 gap-1 text-sm sm:grid-cols-4 lg:grid-cols-1">
+            <Link href="/" className="flex items-center justify-between rounded-[8px] bg-white px-3 py-2 font-semibold text-stone-950 shadow-sm ring-1 ring-stone-200">
+              Reviews
+              <span className="text-xs text-stone-500">{reviews.length}</span>
+            </Link>
+            <span className="flex items-center justify-between rounded-[8px] px-3 py-2 text-stone-500">
+              New activity
+              <span className="text-xs">{newActivity}</span>
+            </span>
+            <span className="flex items-center justify-between rounded-[8px] px-3 py-2 text-stone-500">
+              Archive
+              <span className="text-xs">0</span>
+            </span>
+            <span className="flex items-center justify-between rounded-[8px] px-3 py-2 text-stone-500">
+              Account
+            </span>
+          </nav>
+        </aside>
+
+        <section className="min-w-0 px-4 py-5 lg:px-6">
+          <div className="flex flex-col gap-3 border-b border-stone-200 pb-4 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-stone-500">Client review workspace</p>
+              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-stone-950">Recent reviews</h2>
             </div>
+            <div className="flex flex-wrap gap-2 text-sm text-stone-600">
+              <span className="rounded-[8px] bg-white px-3 py-2 ring-1 ring-stone-200">{activeReviews} active</span>
+              <span className="rounded-[8px] bg-white px-3 py-2 ring-1 ring-stone-200">{newActivity} new activity</span>
+              <span className="rounded-[8px] bg-white px-3 py-2 ring-1 ring-stone-200">{approvedReviews} approved</span>
+            </div>
+          </div>
 
-            <aside className="space-y-5">
-              <CreatorAuthPanel />
-
-              <div className="rounded-[14px] border border-stone-900 bg-stone-950 p-4 text-white shadow-sm">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-stone-400">Today</p>
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <div>
-                    <p className="text-3xl font-semibold">{activeReviews}</p>
-                    <p className="mt-1 text-sm text-stone-400">active links</p>
-                  </div>
-                  <div>
-                    <p className="text-3xl font-semibold">{activityCount}</p>
-                    <p className="mt-1 text-sm text-stone-400">review events</p>
-                  </div>
-                </div>
-                {firstReviewId ? (
-                  <Link href={`/review/${firstReviewId}`} className="mt-5 inline-flex rounded-[10px] bg-white px-3 py-2 text-sm font-semibold text-stone-950 hover:bg-stone-200">
-                    Preview latest
-                  </Link>
-                ) : null}
-              </div>
-
-              <div className="rounded-[14px] border border-stone-200 bg-white p-4 shadow-sm">
-                <p className="text-sm font-semibold text-stone-950">Review assets</p>
-                <div className="mt-3 space-y-2 text-sm text-stone-600">
-                  <p className="rounded-[10px] bg-stone-50 px-3 py-2">The asset canvas comes first.</p>
-                  <p className="rounded-[10px] bg-stone-50 px-3 py-2">Related assets stay in the same version.</p>
-                  <p className="rounded-[10px] bg-stone-50 px-3 py-2">Version B turns the review into a comparison.</p>
+          <div className="mt-4 overflow-hidden rounded-[12px] border border-stone-200 bg-white">
+            {isLoading ? (
+              <div className="p-5 text-sm text-stone-600">Loading reviews...</div>
+            ) : reviews.length === 0 ? (
+              <div className="flex min-h-[280px] items-center justify-center p-6 text-center">
+                <div className="max-w-sm">
+                  <h3 className="text-lg font-semibold text-stone-950">Create your first review</h3>
+                  <p className="mt-2 text-sm leading-6 text-stone-600">Upload visual work, share one link, and collect pinned feedback.</p>
+                  <button
+                    type="button"
+                    onClick={handleCreateReview}
+                    disabled={isCreating || !user}
+                    className="mt-4 rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {user ? 'New review' : 'Sign in to create'}
+                  </button>
                 </div>
               </div>
-            </aside>
+            ) : (
+              reviews.map((review, index) => (
+                <article key={review.id} className={`grid gap-3 px-4 py-3 text-sm md:grid-cols-[minmax(0,1.25fr)_minmax(260px,0.95fr)_auto] md:items-center ${index > 0 ? 'border-t border-stone-200' : ''}`}>
+                  <div className="min-w-0">
+                    <h3 className="truncate font-semibold text-stone-950">{review.title}</h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500">
+                      <span>{review.client || 'No client yet'}</span>
+                      <span className="text-stone-300">/</span>
+                      <span>Updated {review.updatedAt}</span>
+                    </div>
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${statusClasses(review.status)}`}>
+                        {statusLabel(review.status)}
+                      </span>
+                      {review.newActivity > 0 ? (
+                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">{review.newActivity} new</span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 truncate text-xs text-stone-500">{activityText(review)}</p>
+                  </div>
+
+                  <div className="flex items-center gap-2 md:justify-end">
+                    <button type="button" onClick={() => void copyReviewLink(review.id)} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
+                      Share
+                    </button>
+                    <button type="button" onClick={() => void handleOpenReview(review.id)} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
+                      Open
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
           </div>
         </section>
       </div>
