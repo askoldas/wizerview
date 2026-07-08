@@ -58,7 +58,7 @@ export function createEmptyReviewData(reviewId: string): ReviewData {
     options: [
       {
         id: `option-${reviewId}-a`,
-        title: 'Option A',
+        title: 'Version A',
         description: 'Primary direction for review.',
         assets: [],
       },

@@ -249,8 +249,8 @@ export function ReviewDashboard() {
                 <p className="text-sm font-semibold text-stone-950">Review assets</p>
                 <div className="mt-3 space-y-2 text-sm text-stone-600">
                   <p className="rounded-[10px] bg-stone-50 px-3 py-2">The asset canvas comes first.</p>
-                  <p className="rounded-[10px] bg-stone-50 px-3 py-2">Related assets stay in the same option.</p>
-                  <p className="rounded-[10px] bg-stone-50 px-3 py-2">Option B turns the review into a comparison.</p>
+                  <p className="rounded-[10px] bg-stone-50 px-3 py-2">Related assets stay in the same version.</p>
+                  <p className="rounded-[10px] bg-stone-50 px-3 py-2">Version B turns the review into a comparison.</p>
                 </div>
               </div>
             </aside>

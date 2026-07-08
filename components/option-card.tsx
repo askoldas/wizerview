@@ -32,7 +32,7 @@ export function OptionCard({ option, comments, onAddComment, onSelectOption, onO
           onClick={() => onSelectOption(option.id)}
           className={`rounded-full px-3 py-2 text-sm font-medium ${selectedDirection === option.id ? 'bg-stone-900 text-white' : 'bg-white text-stone-700'}`}
         >
-          {selectedDirection === option.id ? 'Preferred' : 'Prefer this'}
+          {selectedDirection === option.id ? 'Selected' : 'Select this version'}
         </button>
       </div>
 
@@ -54,7 +54,7 @@ export function OptionCard({ option, comments, onAddComment, onSelectOption, onO
       </div>
 
       <div className="mt-4">
-        <FeedbackPanel value={optionFeedback} onChange={(value) => onOptionFeedbackChange(option.id, value)} label="Option feedback" />
+        <FeedbackPanel value={optionFeedback} onChange={(value) => onOptionFeedbackChange(option.id, value)} label="Version feedback" />
       </div>
     </div>
   );
