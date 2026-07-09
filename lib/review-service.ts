@@ -455,7 +455,17 @@ export async function loadReviewById(reviewId: string): Promise<ReviewData> {
     return { ...initialReview, id: reviewId, shareToken: 'mock-share-token' };
   }
 
-  const { data, error } = await client.from(REVIEW_TABLE).select('id, share_token, content').eq('id', reviewId).maybeSingle();
+  const { data: userData } = await client.auth.getUser();
+  if (!userData.user) {
+    return createEmptyReviewData(reviewId);
+  }
+
+  const { data, error } = await client
+    .from(REVIEW_TABLE)
+    .select('id, share_token, content')
+    .eq('id', reviewId)
+    .eq('owner_id', userData.user.id)
+    .maybeSingle();
 
   if (error) {
     console.error('Failed to load review from Supabase:', error.message);
@@ -464,11 +474,6 @@ export async function loadReviewById(reviewId: string): Promise<ReviewData> {
 
   if (data) {
     return hydrateReviewFromRow(data as ReviewRow);
-  }
-
-  const { data: userData } = await client.auth.getUser();
-  if (!userData.user) {
-    return createEmptyReviewData(reviewId);
   }
 
   const emptyReview = createEmptyReviewData(reviewId);
@@ -573,6 +578,7 @@ export async function listReviews(): Promise<ReviewSummary[]> {
   const { data, error } = await client
     .from(REVIEW_TABLE)
     .select('id, share_token, title, client_name, status, updated_at, creator_seen_at, content')
+    .eq('owner_id', userData.user.id)
     .order('updated_at', { ascending: false });
 
   if (error) {
