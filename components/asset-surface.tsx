@@ -12,6 +12,7 @@ export function AssetSurface({ asset, version }: AssetSurfaceProps) {
     return (
       <div className="mx-auto flex min-h-[430px] max-w-[860px] items-center justify-center rounded-[12px] border border-stone-200 bg-[#efede7] p-4 shadow-sm">
         <div className="relative w-full overflow-hidden rounded-[12px] border border-stone-200 bg-white shadow-sm">
+          {/* eslint-disable-next-line @next/next/no-img-element -- Review previews may be blob or storage URLs. */}
           <img src={version.previewUrl} alt={`${asset.title} ${version.label}`} className="h-[390px] w-full object-contain" />
           <div className="absolute left-3 top-3 rounded-[8px] bg-stone-950/85 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white">
             {asset.assetType === 'pdf' ? 'PDF preview' : 'Optimized preview'}

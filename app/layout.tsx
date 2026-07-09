@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import '../styles/globals.css';
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://wizerview.app'),
   title: 'WizerView',
   description: 'Lightweight client review and approval flows.',
   manifest: '/favicon/site.webmanifest',

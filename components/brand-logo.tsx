@@ -3,11 +3,12 @@ import Link from 'next/link';
 
 interface BrandLogoProps {
   className?: string;
+  href?: string;
 }
 
-export function BrandLogo({ className = '' }: BrandLogoProps) {
+export function BrandLogo({ className = '', href = '/' }: BrandLogoProps) {
   return (
-    <Link href="/" className={`flex items-center ${className}`} aria-label="WizerView home">
+    <Link href={href} className={`flex items-center ${className}`} aria-label="WizerView home">
       <Image
         src="/wizerview_logo.svg"
         alt="WizerView"
@@ -15,7 +16,7 @@ export function BrandLogo({ className = '' }: BrandLogoProps) {
         height={45}
         priority
         unoptimized
-        className="h-8 w-auto"
+        className="h-7 w-auto"
       />
     </Link>
   );

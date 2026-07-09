@@ -1,4 +1,4 @@
-import { ReviewWorkspace } from '@/components/review-workspace';
+import { redirect } from 'next/navigation';
 
 interface SharedReviewPageProps {
   params: {
@@ -7,5 +7,5 @@ interface SharedReviewPageProps {
 }
 
 export default function SharedReviewPage({ params }: SharedReviewPageProps) {
-  return <ReviewWorkspace mode="client" shareToken={params.shareToken} />;
+  redirect(`/review/${params.shareToken}`);
 }

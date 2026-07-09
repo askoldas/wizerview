@@ -149,7 +149,7 @@ export function ReviewDashboard() {
 
     try {
       const review = await createReview();
-      router.push(`/review-builder/${review.id}`);
+      router.push(`/reviews/${review.id}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Could not create review.');
     } finally {
@@ -178,7 +178,7 @@ export function ReviewDashboard() {
       setMessage(error instanceof Error ? error.message : 'Could not mark review as seen.');
     }
 
-    router.push(`/review-builder/${reviewId}`);
+    router.push(`/reviews/${reviewId}`);
   };
 
   const copyReviewLink = async (review: ReviewSummary) => {
@@ -187,7 +187,7 @@ export function ReviewDashboard() {
       return;
     }
 
-    const shareLink = typeof window !== 'undefined' ? `${window.location.origin}/r/${review.shareToken}` : `/r/${review.shareToken}`;
+    const shareLink = typeof window !== 'undefined' ? `${window.location.origin}/review/${review.shareToken}` : `/review/${review.shareToken}`;
 
     if (typeof navigator === 'undefined' || !navigator.clipboard) {
       setMessage(shareLink);
@@ -235,7 +235,7 @@ export function ReviewDashboard() {
       <header className="sticky top-0 z-30 border-b border-border bg-surface/95 px-4 py-3 backdrop-blur lg:px-6">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <BrandLogo />
+            <BrandLogo href="/dashboard" />
             <span className="h-5 w-px bg-border" />
             <span className="text-xs font-semibold uppercase tracking-[0.22em] text-text-subtle">Review dashboard</span>
             <h1 className="text-sm font-semibold text-text sm:text-base">Reviews</h1>
@@ -282,7 +282,7 @@ export function ReviewDashboard() {
       <div className="grid flex-1 lg:grid-cols-[176px_minmax(0,1fr)]">
         <aside className="border-b border-border bg-surface-muted/80 p-3 lg:border-b-0 lg:border-r">
           <nav className="grid grid-cols-2 gap-1 text-sm sm:grid-cols-4 lg:grid-cols-1">
-            <Link href="/" className="flex items-center justify-between rounded-md bg-surface px-3 py-2 font-semibold text-text shadow-sm ring-1 ring-border">
+            <Link href="/dashboard" className="flex items-center justify-between rounded-md bg-surface px-3 py-2 font-semibold text-text shadow-sm ring-1 ring-border">
               Reviews
               <span className="text-xs text-text-subtle">{reviews.length}</span>
             </Link>
@@ -358,8 +358,13 @@ export function ReviewDashboard() {
 
                   <div className="flex items-center gap-2 md:justify-end">
                     <button type="button" onClick={() => void copyReviewLink(review)} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">
-                      Share
+                      Copy client link
                     </button>
+                    {review.shareToken ? (
+                      <a href={`/review/${review.shareToken}`} target="_blank" rel="noreferrer" className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">
+                        Preview as client
+                      </a>
+                    ) : null}
                     <button type="button" onClick={() => void handleDeleteReview(review)} disabled={deletingReviewId === review.id} className="rounded-[8px] border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60">
                       {deletingReviewId === review.id ? 'Deleting...' : 'Delete'}
                     </button>

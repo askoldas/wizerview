@@ -211,7 +211,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       return;
     }
 
-    const nextShareLink = typeof window !== 'undefined' ? `${window.location.origin}/r/${token}` : `/r/${token}`;
+    const nextShareLink = typeof window !== 'undefined' ? `${window.location.origin}/review/${token}` : `/review/${token}`;
 
     if (typeof navigator === 'undefined' || !navigator.clipboard) {
       setSaveMessage(nextShareLink);
@@ -733,6 +733,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       >
         <div className={`flex h-20 items-center justify-center overflow-hidden rounded-[8px] bg-gradient-to-br ${asset.accent ?? 'from-stone-700 via-stone-500 to-stone-200'} text-[10px] font-semibold uppercase tracking-[0.18em] text-white`}>
           {thumbnailVersion?.thumbnailUrl || thumbnailVersion?.previewUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element -- Review thumbnails may be blob or storage URLs.
             <img src={thumbnailVersion.thumbnailUrl ?? thumbnailVersion.previewUrl} alt="" className="h-full w-full rounded-[8px] object-cover" />
           ) : (
             asset.assetType
@@ -796,7 +797,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       <header className="sticky top-0 z-30 border-b border-border bg-surface/95 px-4 py-3 backdrop-blur lg:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <BrandLogo />
+            {isCreator ? <BrandLogo href="/dashboard" /> : null}
             <span className="h-5 w-px bg-border" />
             <span className="text-xs font-semibold uppercase tracking-[0.22em] text-text-subtle">{isCreator ? 'Creator workspace' : 'Client review'}</span>
             <h1 className="min-w-0 text-sm font-semibold text-text sm:text-base">{review.title}</h1>
@@ -806,7 +807,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           <div className="flex flex-wrap items-center gap-2">
             {isCreator ? (
               <>
-                <Link href={review.shareToken ? `/r/${review.shareToken}` : `/review/${review.id}`} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">Preview client view</Link>
+                <Link href={review.shareToken ? `/review/${review.shareToken}` : `/review/${review.id}`} target="_blank" rel="noreferrer" className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">Preview as client</Link>
                 <button type="button" onClick={() => void copyReviewLink()} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">Copy review link</button>
                 <button type="button" onClick={handleSaveReview} disabled={isSaving || isCheckingAuth || (isSupabaseConfigured() && !authUser)} className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60">
                   {isSaving ? 'Saving...' : 'Save'}
@@ -866,7 +867,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               {isCreator ? (
                 <>
                   <button type="button" onClick={addVersion} className="rounded-[8px] border border-dashed border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">+ Add version</button>
-                  <button type="button" onClick={() => void handleDeleteVersion()} disabled={!activeVersion} className="rounded-[8px] border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">Delete version</button>
+                  {hasMultipleVersions ? (
+                    <button type="button" onClick={() => void handleDeleteVersion()} disabled={!activeVersion} className="rounded-[8px] border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">Delete version</button>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -1134,6 +1137,11 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             </>
           )}
         </div>
+        {!isCreator ? (
+          <Link href="/" className="text-xs font-semibold text-text-subtle hover:text-brand">
+            Reviewed with WizerView
+          </Link>
+        ) : null}
       </footer>
     </main>
   );

@@ -1,5 +1,4 @@
-import { ReviewBuilder } from '@/components/review-builder';
-import { createEmptyReviewData } from '@/lib/review-service';
+import { redirect } from 'next/navigation';
 
 interface ReviewBuilderPageProps {
   params: {
@@ -8,5 +7,5 @@ interface ReviewBuilderPageProps {
 }
 
 export default function ReviewBuilderPage({ params }: ReviewBuilderPageProps) {
-  return <ReviewBuilder initialReview={createEmptyReviewData(params.reviewId)} />;
+  redirect(`/reviews/${params.reviewId}`);
 }
