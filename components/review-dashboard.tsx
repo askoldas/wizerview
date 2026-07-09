@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
+import { BrandLogo } from '@/components/brand-logo';
 import { createReview, deleteReview, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
 import { createSupabaseClientInstance } from '@/lib/supabase';
 
@@ -27,7 +28,7 @@ function statusClasses(status: string) {
   if (status === 'Draft') return 'bg-amber-50 text-amber-700 ring-amber-200';
   if (status === 'Changes Requested') return 'bg-rose-50 text-rose-700 ring-rose-200';
   if (status === 'Direction Selected') return 'bg-sky-50 text-sky-700 ring-sky-200';
-  return 'bg-stone-100 text-stone-700 ring-stone-200';
+  return 'bg-surface-muted text-text-muted ring-border';
 }
 
 export function ReviewDashboard() {
@@ -230,25 +231,25 @@ export function ReviewDashboard() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#f5f3ee] text-stone-950">
-      <header className="sticky top-0 z-30 border-b border-stone-200 bg-white/95 px-4 py-3 backdrop-blur lg:px-6">
+    <main className="flex min-h-screen flex-col bg-canvas text-text">
+      <header className="sticky top-0 z-30 border-b border-border bg-surface/95 px-4 py-3 backdrop-blur lg:px-6">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <Link href="/" className="text-base font-semibold tracking-tight text-stone-950">WizerView</Link>
-            <span className="h-5 w-px bg-stone-200" />
-            <span className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Review dashboard</span>
-            <h1 className="text-sm font-semibold text-stone-950 sm:text-base">Reviews</h1>
-            {message ? <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs text-stone-600">{message}</span> : null}
+            <BrandLogo />
+            <span className="h-5 w-px bg-border" />
+            <span className="text-xs font-semibold uppercase tracking-[0.22em] text-text-subtle">Review dashboard</span>
+            <h1 className="text-sm font-semibold text-text sm:text-base">Reviews</h1>
+            {message ? <span className="rounded-full bg-surface-muted px-2.5 py-1 text-xs text-text-muted">{message}</span> : null}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             {user ? (
               <>
-                <div className="flex items-center gap-2 rounded-[8px] bg-stone-100 px-2 py-1.5 text-sm text-stone-700">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-xs font-semibold text-stone-900 shadow-sm">{getInitials(user.email)}</span>
+                <div className="flex items-center gap-2 rounded-md bg-surface-muted px-2 py-1.5 text-sm text-text-muted">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface text-xs font-semibold text-text shadow-sm">{getInitials(user.email)}</span>
                   <span className="max-w-[220px] truncate">{user.email}</span>
                 </div>
-                <button type="button" onClick={handleSignOut} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
+                <button type="button" onClick={handleSignOut} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">
                   Log out
                 </button>
               </>
@@ -259,9 +260,9 @@ export function ReviewDashboard() {
                   value={email}
                   onChange={(event) => setEmail(event.target.value)}
                   placeholder="you@example.com"
-                  className="h-9 w-56 rounded-[8px] border border-stone-200 bg-white px-3 text-sm"
+                  className="h-9 w-56 rounded-md border border-border bg-surface px-3 text-sm"
                 />
-                <button type="button" onClick={handleSendLoginLink} disabled={isSendingLogin || !email} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60">
+                <button type="button" onClick={handleSendLoginLink} disabled={isSendingLogin || !email} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60">
                   {isSendingLogin ? 'Sending...' : 'Email sign-in link'}
                 </button>
               </div>
@@ -270,7 +271,7 @@ export function ReviewDashboard() {
               type="button"
               onClick={handleCreateReview}
               disabled={isCreating || !user}
-              className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isCreating ? 'Creating...' : 'New review'}
             </button>
@@ -279,52 +280,52 @@ export function ReviewDashboard() {
       </header>
 
       <div className="grid flex-1 lg:grid-cols-[176px_minmax(0,1fr)]">
-        <aside className="border-b border-stone-200 bg-stone-50/80 p-3 lg:border-b-0 lg:border-r">
+        <aside className="border-b border-border bg-surface-muted/80 p-3 lg:border-b-0 lg:border-r">
           <nav className="grid grid-cols-2 gap-1 text-sm sm:grid-cols-4 lg:grid-cols-1">
-            <Link href="/" className="flex items-center justify-between rounded-[8px] bg-white px-3 py-2 font-semibold text-stone-950 shadow-sm ring-1 ring-stone-200">
+            <Link href="/" className="flex items-center justify-between rounded-md bg-surface px-3 py-2 font-semibold text-text shadow-sm ring-1 ring-border">
               Reviews
-              <span className="text-xs text-stone-500">{reviews.length}</span>
+              <span className="text-xs text-text-subtle">{reviews.length}</span>
             </Link>
-            <span className="flex items-center justify-between rounded-[8px] px-3 py-2 text-stone-500">
+            <span className="flex items-center justify-between rounded-md px-3 py-2 text-text-subtle">
               New activity
               <span className="text-xs">{newActivity}</span>
             </span>
-            <span className="flex items-center justify-between rounded-[8px] px-3 py-2 text-stone-500">
+            <span className="flex items-center justify-between rounded-md px-3 py-2 text-text-subtle">
               Archive
               <span className="text-xs">0</span>
             </span>
-            <span className="flex items-center justify-between rounded-[8px] px-3 py-2 text-stone-500">
+            <span className="flex items-center justify-between rounded-md px-3 py-2 text-text-subtle">
               Account
             </span>
           </nav>
         </aside>
 
         <section className="min-w-0 px-4 py-5 lg:px-6">
-          <div className="flex flex-col gap-3 border-b border-stone-200 pb-4 xl:flex-row xl:items-end xl:justify-between">
+          <div className="flex flex-col gap-3 border-b border-border pb-4 xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-stone-500">Client review workspace</p>
-              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-stone-950">Recent reviews</h2>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-text-subtle">Client review workspace</p>
+              <h2 className="mt-1 text-2xl font-semibold tracking-tight text-text">Recent reviews</h2>
             </div>
-            <div className="flex flex-wrap gap-2 text-sm text-stone-600">
-              <span className="rounded-[8px] bg-white px-3 py-2 ring-1 ring-stone-200">{activeReviews} active</span>
-              <span className="rounded-[8px] bg-white px-3 py-2 ring-1 ring-stone-200">{newActivity} new activity</span>
-              <span className="rounded-[8px] bg-white px-3 py-2 ring-1 ring-stone-200">{approvedReviews} approved</span>
+            <div className="flex flex-wrap gap-2 text-sm text-text-muted">
+              <span className="rounded-md bg-surface px-3 py-2 ring-1 ring-border">{activeReviews} active</span>
+              <span className="rounded-md bg-surface px-3 py-2 ring-1 ring-border">{newActivity} new activity</span>
+              <span className="rounded-md bg-surface px-3 py-2 ring-1 ring-border">{approvedReviews} approved</span>
             </div>
           </div>
 
-          <div className="mt-4 overflow-hidden rounded-[12px] border border-stone-200 bg-white">
+          <div className="mt-4 overflow-hidden rounded-lg border border-border bg-surface">
             {isLoading ? (
-              <div className="p-5 text-sm text-stone-600">Loading reviews...</div>
+              <div className="p-5 text-sm text-text-muted">Loading reviews...</div>
             ) : reviews.length === 0 ? (
               <div className="flex min-h-[280px] items-center justify-center p-6 text-center">
                 <div className="max-w-sm">
-                  <h3 className="text-lg font-semibold text-stone-950">Create your first review</h3>
-                  <p className="mt-2 text-sm leading-6 text-stone-600">Upload visual work, share one link, and collect pinned feedback.</p>
+                  <h3 className="text-lg font-semibold text-text">Create your first review</h3>
+                  <p className="mt-2 text-sm leading-6 text-text-muted">Upload visual work, share one link, and collect pinned feedback.</p>
                   <button
                     type="button"
                     onClick={handleCreateReview}
                     disabled={isCreating || !user}
-                    className="mt-4 rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="mt-4 rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {user ? 'New review' : 'Sign in to create'}
                   </button>
@@ -332,12 +333,12 @@ export function ReviewDashboard() {
               </div>
             ) : (
               reviews.map((review, index) => (
-                <article key={review.id} className={`grid gap-3 px-4 py-3 text-sm md:grid-cols-[minmax(0,1.25fr)_minmax(260px,0.95fr)_auto] md:items-center ${index > 0 ? 'border-t border-stone-200' : ''}`}>
+                <article key={review.id} className={`grid gap-3 px-4 py-3 text-sm md:grid-cols-[minmax(0,1.25fr)_minmax(260px,0.95fr)_auto] md:items-center ${index > 0 ? 'border-t border-border' : ''}`}>
                   <div className="min-w-0">
-                    <h3 className="truncate font-semibold text-stone-950">{review.title}</h3>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-stone-500">
+                    <h3 className="truncate font-semibold text-text">{review.title}</h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-subtle">
                       <span>{review.client || 'No client yet'}</span>
-                      <span className="text-stone-300">/</span>
+                      <span className="text-border-strong">/</span>
                       <span>Updated {review.updatedAt}</span>
                     </div>
                   </div>
@@ -351,18 +352,18 @@ export function ReviewDashboard() {
                         <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">{review.newActivity} new</span>
                       ) : null}
                     </div>
-                    <p className="mt-1 truncate text-xs text-stone-500">{activityText(review)}</p>
-                    <p className="mt-1 truncate text-xs text-stone-400">{review.latestActivityLabel} / {review.latestActivityAt}</p>
+                    <p className="mt-1 truncate text-xs text-text-subtle">{activityText(review)}</p>
+                    <p className="mt-1 truncate text-xs text-text-subtle">{review.latestActivityLabel} / {review.latestActivityAt}</p>
                   </div>
 
                   <div className="flex items-center gap-2 md:justify-end">
-                    <button type="button" onClick={() => void copyReviewLink(review)} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
+                    <button type="button" onClick={() => void copyReviewLink(review)} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">
                       Share
                     </button>
                     <button type="button" onClick={() => void handleDeleteReview(review)} disabled={deletingReviewId === review.id} className="rounded-[8px] border border-rose-200 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60">
                       {deletingReviewId === review.id ? 'Deleting...' : 'Delete'}
                     </button>
-                    <button type="button" onClick={() => void handleOpenReview(review.id)} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
+                    <button type="button" onClick={() => void handleOpenReview(review.id)} className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
                       Open
                     </button>
                   </div>

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent 
 import { FiClipboard, FiTrash2, FiUploadCloud } from 'react-icons/fi';
 import type { User } from '@supabase/supabase-js';
 import { AssetSurface } from '@/components/asset-surface';
+import { BrandLogo } from '@/components/brand-logo';
 import { FeedbackPanel } from '@/components/feedback-panel';
 import { PinCommentLayer } from '@/components/pin-comment-layer';
 import { estimateStorageSavings, processImagePreview, processPdfPreview } from '@/lib/asset-processing';
@@ -719,7 +720,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     return (
     <article
       key={asset.id}
-      className={`group relative w-full rounded-[10px] border bg-white p-2 text-left transition ${isActive ? 'border-stone-950 shadow-sm' : 'border-transparent hover:border-stone-200'}`}
+      className={`group relative w-full rounded-md border bg-surface p-2 text-left transition ${isActive ? 'border-brand shadow-sm' : 'border-transparent hover:border-border'}`}
     >
       <button
         type="button"
@@ -738,8 +739,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           )}
         </div>
         <div className="mt-2 flex items-start justify-between gap-2">
-          <span className="text-xs font-semibold leading-4 text-stone-900">{asset.title}</span>
-          {isCreator ? <span className="text-stone-400">...</span> : null}
+          <span className="text-xs font-semibold leading-4 text-text">{asset.title}</span>
+          {isCreator ? <span className="text-text-subtle">...</span> : null}
         </div>
       </button>
       {isCreator ? (
@@ -763,59 +764,59 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const activeVersionHasPreview = Boolean(activeVersion?.previewUrl && activeVersion.status === 'ready');
 
   return (
-    <main className="flex min-h-screen flex-col bg-[#f5f3ee] text-stone-950">
+    <main className="flex min-h-screen flex-col bg-canvas text-text">
       {showIdentityModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/70 px-4">
-          <div className="w-full max-w-md rounded-[14px] border border-stone-200 bg-white p-6 shadow-xl">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-stone-500">Reviewer access</p>
-            <h2 className="mt-2 text-2xl font-semibold text-stone-900">Before feedback, tell us who you are</h2>
-            <p className="mt-3 text-sm text-stone-600">This keeps comments and decisions attached to the right reviewer without needing an account.</p>
+          <div className="w-full max-w-md rounded-lg border border-border bg-surface p-6 shadow-xl">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-text-subtle">Reviewer access</p>
+            <h2 className="mt-2 text-2xl font-semibold text-text">Before feedback, tell us who you are</h2>
+            <p className="mt-3 text-sm text-text-muted">This keeps comments and decisions attached to the right reviewer without needing an account.</p>
 
             {review.shareSettings.pinProtection ? (
-              <div className="mt-4 rounded-[12px] border border-stone-200 bg-stone-50 p-4">
-                <label className="block text-sm font-medium text-stone-700">PIN (demo only)</label>
-                <input className="mt-2 w-full rounded-[10px] border border-stone-200 bg-white px-3 py-2.5 text-sm" placeholder="1234" />
+              <div className="mt-4 rounded-lg border border-border bg-surface-muted p-4">
+                <label className="block text-sm font-medium text-text-muted">PIN (demo only)</label>
+                <input className="mt-2 w-full rounded-md border border-border bg-surface px-3 py-2.5 text-sm" placeholder="1234" />
               </div>
             ) : null}
 
-            <label className="mt-4 block text-sm font-medium text-stone-700">Reviewer name</label>
+            <label className="mt-4 block text-sm font-medium text-text-muted">Reviewer name</label>
             <input
               value={reviewerName}
               onChange={(event) => setReviewerName(event.target.value)}
               placeholder="Alex Morgan"
-              className="mt-2 w-full rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm"
+              className="mt-2 w-full rounded-md border border-border bg-surface-muted px-3 py-2.5 text-sm"
             />
-            <button type="button" onClick={handleNameSubmit} className="mt-5 rounded-[10px] bg-stone-950 px-4 py-2 text-sm font-semibold text-white">
+            <button type="button" onClick={handleNameSubmit} className="mt-5 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
               Continue to review
             </button>
           </div>
         </div>
       ) : null}
 
-      <header className="sticky top-0 z-30 border-b border-stone-200 bg-white/95 px-4 py-3 backdrop-blur lg:px-6">
+      <header className="sticky top-0 z-30 border-b border-border bg-surface/95 px-4 py-3 backdrop-blur lg:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
-            <Link href="/" className="text-base font-semibold tracking-tight text-stone-950">WizerView</Link>
-            <span className="h-5 w-px bg-stone-200" />
-            <span className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">{isCreator ? 'Creator workspace' : 'Client review'}</span>
-            <h1 className="min-w-0 text-sm font-semibold text-stone-950 sm:text-base">{review.title}</h1>
-            {saveMessage ? <span className="rounded-full bg-stone-100 px-2.5 py-1 text-xs text-stone-600">{saveMessage}</span> : null}
+            <BrandLogo />
+            <span className="h-5 w-px bg-border" />
+            <span className="text-xs font-semibold uppercase tracking-[0.22em] text-text-subtle">{isCreator ? 'Creator workspace' : 'Client review'}</span>
+            <h1 className="min-w-0 text-sm font-semibold text-text sm:text-base">{review.title}</h1>
+            {saveMessage ? <span className="rounded-full bg-surface-muted px-2.5 py-1 text-xs text-text-muted">{saveMessage}</span> : null}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             {isCreator ? (
               <>
-                <Link href={review.shareToken ? `/r/${review.shareToken}` : `/review/${review.id}`} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Preview client view</Link>
-                <button type="button" onClick={() => void copyReviewLink()} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Copy review link</button>
-                <button type="button" onClick={handleSaveReview} disabled={isSaving || isCheckingAuth || (isSupabaseConfigured() && !authUser)} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60">
+                <Link href={review.shareToken ? `/r/${review.shareToken}` : `/review/${review.id}`} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">Preview client view</Link>
+                <button type="button" onClick={() => void copyReviewLink()} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">Copy review link</button>
+                <button type="button" onClick={handleSaveReview} disabled={isSaving || isCheckingAuth || (isSupabaseConfigured() && !authUser)} className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60">
                   {isSaving ? 'Saving...' : 'Save'}
                 </button>
-                <div className="rounded-[8px] bg-stone-100 px-3 py-2 text-sm text-stone-600">{authUser?.email ?? 'Not signed in'}</div>
+                <div className="rounded-md bg-surface-muted px-3 py-2 text-sm text-text-muted">{authUser?.email ?? 'Not signed in'}</div>
               </>
             ) : (
               <>
-                <div className="rounded-[8px] bg-stone-100 px-3 py-2 text-sm text-stone-600">{review.client || 'Client'}</div>
-                <input value={reviewerName} onChange={(event) => setReviewerName(event.target.value)} placeholder="Your name" className="w-40 rounded-[8px] border border-stone-200 bg-white px-3 py-2 text-sm" />
+                <div className="rounded-md bg-surface-muted px-3 py-2 text-sm text-text-muted">{review.client || 'Client'}</div>
+                <input value={reviewerName} onChange={(event) => setReviewerName(event.target.value)} placeholder="Your name" className="w-40 rounded-md border border-border bg-surface px-3 py-2 text-sm" />
               </>
             )}
           </div>
@@ -823,19 +824,19 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       </header>
 
       <div className="grid flex-1 lg:grid-cols-[156px_minmax(0,1fr)_360px]">
-        <aside className="border-b border-stone-200 bg-stone-50/80 p-3 lg:border-b-0 lg:border-r">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-stone-500">Assets</p>
+        <aside className="border-b border-border bg-surface-muted/80 p-3 lg:border-b-0 lg:border-r">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-text-subtle">Assets</p>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-1">
             {review.assets.length ? review.assets.map(renderAssetRailButton) : (
-              <div className="rounded-[10px] border border-dashed border-stone-300 bg-white p-3 text-xs leading-5 text-stone-500">No assets in this review yet.</div>
+              <div className="rounded-md border border-dashed border-border-strong bg-surface p-3 text-xs leading-5 text-text-subtle">No assets in this review yet.</div>
             )}
           </div>
           {isCreator ? (
-            <button type="button" onClick={addRelatedAsset} className="mt-3 flex w-full justify-center rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
+            <button type="button" onClick={addRelatedAsset} className="mt-3 flex w-full justify-center rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
               Add asset
             </button>
           ) : null}
-          {uploadMessage ? <p className="mt-3 text-xs leading-5 text-stone-500">{uploadMessage}</p> : null}
+          {uploadMessage ? <p className="mt-3 text-xs leading-5 text-text-subtle">{uploadMessage}</p> : null}
         </aside>
 
         <section className="min-w-0 px-4 py-4 lg:px-6">
