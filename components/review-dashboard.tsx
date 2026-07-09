@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
+import { AuthModal } from '@/components/auth/auth-modal';
 import { BrandLogo } from '@/components/brand-logo';
 import { createReview, deleteReview, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
 import { createSupabaseClientInstance } from '@/lib/supabase';
@@ -40,8 +41,6 @@ export function ReviewDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [deletingReviewId, setDeletingReviewId] = useState<string | null>(null);
-  const [isSendingLogin, setIsSendingLogin] = useState(false);
-  const [email, setEmail] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const lastUserId = useRef<string | null>(null);
 
@@ -110,24 +109,8 @@ export function ReviewDashboard() {
     void loadReviews();
   }, [isAuthReady, user]);
 
-  const handleSendLoginLink = async () => {
-    if (!supabase) {
-      setMessage('Add Supabase environment variables before signing in.');
-      return;
-    }
-
-    setIsSendingLogin(true);
-    setMessage(null);
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
-      },
-    });
-
-    setMessage(error ? error.message : 'Check your email for the sign-in link.');
-    setIsSendingLogin(false);
+  const openAuthModal = (mode: 'login' | 'signup') => {
+    router.push(`/dashboard?auth=${mode}&next=${encodeURIComponent('/dashboard')}`);
   };
 
   const handleSignOut = async () => {
@@ -140,7 +123,7 @@ export function ReviewDashboard() {
 
   const handleCreateReview = async () => {
     if (!user) {
-      setMessage('Sign in to create a review.');
+      openAuthModal('signup');
       return;
     }
 
@@ -255,22 +238,18 @@ export function ReviewDashboard() {
               </>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  placeholder="you@example.com"
-                  className="h-9 w-56 rounded-md border border-border bg-surface px-3 text-sm"
-                />
-                <button type="button" onClick={handleSendLoginLink} disabled={isSendingLogin || !email} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-60">
-                  {isSendingLogin ? 'Sending...' : 'Email sign-in link'}
+                <button type="button" onClick={() => openAuthModal('login')} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">
+                  Sign in
+                </button>
+                <button type="button" onClick={() => openAuthModal('signup')} className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
+                  Create account
                 </button>
               </div>
             )}
             <button
               type="button"
               onClick={handleCreateReview}
-              disabled={isCreating || !user}
+              disabled={isCreating}
               className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isCreating ? 'Creating...' : 'New review'}
@@ -323,11 +302,11 @@ export function ReviewDashboard() {
                   <p className="mt-2 text-sm leading-6 text-text-muted">Upload visual work, share one link, and collect pinned feedback.</p>
                   <button
                     type="button"
-                    onClick={handleCreateReview}
-                    disabled={isCreating || !user}
+                    onClick={user ? handleCreateReview : () => openAuthModal('signup')}
+                    disabled={isCreating}
                     className="mt-4 rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {user ? 'New review' : 'Sign in to create'}
+                    {user ? 'New review' : 'Create account'}
                   </button>
                 </div>
               </div>
@@ -378,6 +357,9 @@ export function ReviewDashboard() {
           </div>
         </section>
       </div>
+      <Suspense fallback={null}>
+        <AuthModal defaultNext="/dashboard" />
+      </Suspense>
     </main>
   );
 }

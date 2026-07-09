@@ -1,9 +1,11 @@
 "use client";
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { FiClipboard, FiTrash2, FiUploadCloud } from 'react-icons/fi';
 import type { User } from '@supabase/supabase-js';
+import { AuthModal } from '@/components/auth/auth-modal';
 import { AssetSurface } from '@/components/asset-surface';
 import { BrandLogo } from '@/components/brand-logo';
 import { FeedbackPanel } from '@/components/feedback-panel';
@@ -54,6 +56,8 @@ function formatByteSize(bytes: number) {
 
 export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: ReviewWorkspaceProps) {
   const isCreator = mode === 'creator';
+  const router = useRouter();
+  const pathname = usePathname();
   const supabase = useMemo(() => createSupabaseClientInstance(), []);
   const fallbackReviewId = reviewId ?? `shared-${shareToken ?? 'review'}`;
   const fallbackReview = useMemo(() => initialReview ?? createEmptyReviewData(fallbackReviewId), [fallbackReviewId, initialReview]);
@@ -73,9 +77,6 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const [isSaving, setIsSaving] = useState(false);
   const [isReviewLoaded, setIsReviewLoaded] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
-  const [authEmail, setAuthEmail] = useState('');
-  const [authMessage, setAuthMessage] = useState<string | null>(null);
-  const [isSendingLogin, setIsSendingLogin] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(isCreator && Boolean(supabase));
   const [hasMarkedSeen, setHasMarkedSeen] = useState(false);
   const [reviewerName, setReviewerName] = useState('');
@@ -248,24 +249,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     }
   };
 
-  const handleSendLoginLink = async () => {
-    if (!supabase) {
-      setAuthMessage('Add Supabase environment variables before signing in.');
-      return;
-    }
-
-    setIsSendingLogin(true);
-    setAuthMessage(null);
-
-    const { error } = await supabase.auth.signInWithOtp({
-      email: authEmail,
-      options: {
-        emailRedirectTo: typeof window !== 'undefined' ? window.location.href : undefined,
-      },
-    });
-
-    setAuthMessage(error ? error.message : 'Check your email for the sign-in link.');
-    setIsSendingLogin(false);
+  const openAuthModal = (authMode: 'login' | 'signup') => {
+    const nextPath = pathname || '/dashboard';
+    router.push(`${nextPath}?auth=${authMode}&next=${encodeURIComponent(nextPath)}`);
   };
 
   const handleSignOut = async () => {
@@ -1104,11 +1090,12 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                 <button type="button" onClick={handleSignOut} className="mt-3 rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700">Log out</button>
               ) : (
                 <div className="mt-3 grid gap-2">
-                  <input type="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} placeholder="you@example.com" className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm" />
-                  <button type="button" onClick={handleSendLoginLink} disabled={isSendingLogin || !authEmail} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 disabled:opacity-60">
-                    {isSendingLogin ? 'Sending...' : 'Email sign-in link'}
+                  <button type="button" onClick={() => openAuthModal('login')} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
+                    Sign in
                   </button>
-                  {authMessage ? <p className="text-xs text-stone-500">{authMessage}</p> : null}
+                  <button type="button" onClick={() => openAuthModal('signup')} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
+                    Create account
+                  </button>
                 </div>
               )}
             </div>
@@ -1143,6 +1130,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           </Link>
         ) : null}
       </footer>
+      <Suspense fallback={null}>
+        <AuthModal defaultNext={pathname || '/dashboard'} />
+      </Suspense>
     </main>
   );
 }

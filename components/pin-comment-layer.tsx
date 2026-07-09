@@ -16,6 +16,13 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
   const [draftText, setDraftText] = useState('');
   const [activePin, setActivePin] = useState<{ x: number; y: number } | null>(null);
 
+  const getComposerTransform = (pin: { x: number; y: number }) => {
+    const xOffset = pin.x > 68 ? 'calc(-100% - 14px)' : '14px';
+    const yOffset = pin.y > 68 ? 'calc(-100% - 14px)' : '14px';
+
+    return `translate(${xOffset}, ${yOffset})`;
+  };
+
   const handleAddPin = (event: MouseEvent<HTMLDivElement>) => {
     if (!version) return;
     if (event.target !== event.currentTarget) return;
@@ -35,6 +42,16 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
 
   return (
     <div className="absolute inset-0 cursor-crosshair" onClick={handleAddPin}>
+      {activePin ? (
+        <span
+          aria-hidden="true"
+          className="absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white bg-stone-950 text-sm font-semibold text-white shadow-lg ring-2 ring-amber-300"
+          style={{ left: `${activePin.x}%`, top: `${activePin.y}%` }}
+        >
+          +
+        </span>
+      ) : null}
+
       {comments
         .filter((comment) => comment.assetId === asset.id && comment.assetVersionId === version?.id && !comment.parentCommentId && comment.x != null && comment.y != null)
         .map((comment, index) => (
@@ -52,7 +69,15 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
         ))}
 
       {activePin ? (
-        <div className="absolute left-4 top-4 w-72 rounded-[12px] border border-stone-200 bg-white p-3 shadow-xl">
+        <div
+          className="absolute z-10 w-72 rounded-[12px] border border-stone-200 bg-white p-3 shadow-xl"
+          style={{
+            left: `${activePin.x}%`,
+            top: `${activePin.y}%`,
+            transform: getComposerTransform(activePin),
+          }}
+          onClick={(event) => event.stopPropagation()}
+        >
           <p className="text-sm font-semibold text-stone-950">Add a pinned note</p>
           <textarea
             value={draftText}
