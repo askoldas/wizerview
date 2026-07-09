@@ -15,20 +15,20 @@ Do not drift into generic project management, kanban boards, or enterprise proof
 Build around shareable reviews:
 
 ```text
-Project -> Review -> Option -> Asset -> Pin Comment -> Decision
+Project -> Review -> Asset -> Version -> Pin Comment -> Decision
 ```
 
 Projects are lightweight folders. Reviews are the main shared objects.
 
 ## Review Model
 
-A review always starts with one option and one large asset canvas.
+A review is asset-centered. The left rail lists assets, the center top lists versions for the selected asset, and the center canvas previews the selected version.
 
-If no comparison is needed, the review has one option with one or more related assets.
+If no comparison is needed, an asset can have one version.
 
-If comparison is needed, the creator adds another option. Option B or Option C makes the review a comparison.
+If comparison is needed, the creator adds Version B or Version C under that asset.
 
-Each option can contain multiple related assets.
+Each version belongs to one asset.
 
 ## MVP Asset Types
 
@@ -49,7 +49,7 @@ Do not add automatic URL-to-screenshot generation in v1.
 Use:
 
 - simple pinned comments on visual assets
-- option-level feedback
+- version-specific pinned feedback
 - overall review feedback
 - final decision
 
@@ -72,7 +72,7 @@ Supported MVP decisions:
 - approved
 - changes requested
 - direction selected
-- suggest combining options
+- suggest combining versions
 
 ## Stack Preference
 
@@ -117,3 +117,4 @@ Read these docs before implementation:
 - `docs/technical-stack.md`
 - `docs/pricing-strategy.md`
 - `docs/asset-processing.md`
+- `docs/asset-version-model.md`

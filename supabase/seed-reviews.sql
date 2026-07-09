@@ -35,7 +35,7 @@ values (
     "options": [
       {
         "id": "option-a",
-        "title": "Option A",
+        "title": "Version A",
         "description": "A calm, premium homepage concept for the launch.",
         "assets": [
           {

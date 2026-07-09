@@ -23,7 +23,7 @@ export function DecisionBar({ decision, onDecisionChange }: DecisionBarProps) {
           { value: 'Approve', label: 'Approve' },
           { value: 'Request changes', label: 'Request changes' },
           { value: 'Select direction', label: 'Select direction' },
-          { value: 'Suggest combining options', label: 'Suggest combining options' },
+          { value: 'Suggest combining versions', label: 'Suggest combining versions' },
         ].map((option) => (
           <button
             key={option.value}

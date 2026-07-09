@@ -8,6 +8,8 @@ export function CreatorAuthPanel() {
   const supabase = useMemo(() => createSupabaseClientInstance(), []);
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [message, setMessage] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
 
@@ -29,7 +31,7 @@ export function CreatorAuthPanel() {
     };
   }, [supabase]);
 
-  const sendLoginLink = async () => {
+  const authenticate = async () => {
     if (!supabase) {
       setMessage('Add Supabase environment variables before signing in.');
       return;
@@ -38,14 +40,18 @@ export function CreatorAuthPanel() {
     setIsSending(true);
     setMessage(null);
 
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : undefined,
-      },
-    });
+    const { data, error } = mode === 'signup'
+      ? await supabase.auth.signUp({ email, password })
+      : await supabase.auth.signInWithPassword({ email, password });
 
-    setMessage(error ? error.message : 'Check your email for the sign-in link.');
+    if (error) {
+      setMessage(error.message);
+    } else if (mode === 'signup' && !data.session) {
+      setMessage('Account created. If email confirmation is enabled in Supabase, confirm it before signing in.');
+    } else {
+      setMessage(null);
+    }
+
     setIsSending(false);
   };
 
@@ -70,7 +76,7 @@ export function CreatorAuthPanel() {
 
   return (
     <div className="rounded-[14px] border border-stone-200 bg-white p-4 shadow-sm">
-      <p className="text-sm font-semibold text-stone-950">Creator login</p>
+      <p className="text-sm font-semibold text-stone-950">{mode === 'signup' ? 'Create account' : 'Creator login'}</p>
       <p className="mt-1 text-sm leading-5 text-stone-600">Sign in to create reviews, save changes, and upload optimized previews.</p>
       <input
         type="email"
@@ -79,8 +85,18 @@ export function CreatorAuthPanel() {
         placeholder="you@example.com"
         className="mt-3 w-full rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm"
       />
-      <button type="button" onClick={sendLoginLink} disabled={isSending || !email} className="mt-2 w-full rounded-[10px] bg-stone-950 px-3 py-2.5 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60">
-        {isSending ? 'Sending...' : 'Email sign-in link'}
+      <input
+        type="password"
+        value={password}
+        onChange={(event) => setPassword(event.target.value)}
+        placeholder="Password"
+        className="mt-2 w-full rounded-[10px] border border-stone-200 bg-stone-50 px-3 py-2.5 text-sm"
+      />
+      <button type="button" onClick={authenticate} disabled={isSending || !email || password.length < 6} className="mt-2 w-full rounded-[10px] bg-stone-950 px-3 py-2.5 text-sm font-semibold text-white hover:bg-stone-800 disabled:cursor-not-allowed disabled:opacity-60">
+        {isSending ? 'Working...' : mode === 'signup' ? 'Create account' : 'Sign in'}
+      </button>
+      <button type="button" onClick={() => setMode((current) => current === 'signup' ? 'login' : 'signup')} className="mt-2 w-full rounded-[10px] border border-stone-200 bg-white px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-50">
+        {mode === 'signup' ? 'Sign in instead' : 'Create account instead'}
       </button>
       {message ? <p className="mt-2 text-sm text-stone-600">{message}</p> : null}
     </div>

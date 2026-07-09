@@ -1,31 +1,30 @@
 "use client";
 
-import type { Asset } from '@/lib/mock-data';
+import type { AssetVersion, ReviewAsset } from '@/lib/mock-data';
 
 interface AssetSurfaceProps {
-  asset: Asset;
+  asset: ReviewAsset;
+  version?: AssetVersion;
 }
 
-export function AssetSurface({ asset }: AssetSurfaceProps) {
-  if (asset.previewUrl && asset.status === 'ready') {
+export function AssetSurface({ asset, version }: AssetSurfaceProps) {
+  if (version?.previewUrl && version.status === 'ready') {
     return (
       <div className="mx-auto flex min-h-[430px] max-w-[860px] items-center justify-center rounded-[12px] border border-stone-200 bg-[#efede7] p-4 shadow-sm">
         <div className="relative w-full overflow-hidden rounded-[12px] border border-stone-200 bg-white shadow-sm">
-          <img src={asset.previewUrl} alt={asset.title} className="h-[390px] w-full object-contain" />
-          <div className="absolute left-3 top-3 rounded-[8px] bg-stone-950/85 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-white">
-            {asset.kind === 'pdf' ? 'PDF preview' : 'Optimized preview'}
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element -- Review previews may be blob or storage URLs. */}
+          <img src={version.previewUrl} alt={`${asset.title} ${version.label}`} className="block h-auto w-full" />
         </div>
       </div>
     );
   }
 
-  if (asset.kind === 'pdf') {
+  if (asset.assetType === 'pdf') {
     return (
       <div className="mx-auto flex h-[430px] max-w-[520px] flex-col rounded-[12px] border border-stone-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between border-b border-stone-200 pb-3 text-sm text-stone-600">
           <span className="font-medium">Page preview</span>
-          <span>1 / 2</span>
+          <span>{version?.pageNumber ?? 1} / {version?.pageCount ?? 2}</span>
         </div>
         <div className="mt-4 flex-1 rounded-[12px] border border-stone-200 bg-stone-50 p-4">
           <div className="h-10 w-24 rounded-full bg-stone-900" />
@@ -43,7 +42,7 @@ export function AssetSurface({ asset }: AssetSurfaceProps) {
     );
   }
 
-  if (asset.kind === 'image') {
+  if (asset.assetType === 'image') {
     return (
       <div className="mx-auto flex h-[430px] max-w-[560px] items-center justify-center rounded-[12px] border border-stone-200 bg-white p-6 shadow-sm">
         <div className="flex w-full max-w-[380px] flex-col items-center rounded-[14px] border border-stone-200 bg-stone-50 p-6 text-center">
