@@ -92,6 +92,17 @@ function collectObjectUrls(review: ReviewData) {
   );
 }
 
+function commentMatchesAssetVersion(comment: Comment, asset?: ReviewAsset, version?: AssetVersion) {
+  if (!asset || comment.assetId !== asset.id) return false;
+  if (!version) return false;
+  if (comment.assetVersionId === version.id) return true;
+
+  const legacyOptionId = typeof version.metadata?.legacyOptionId === 'string' ? version.metadata.legacyOptionId : null;
+  if (legacyOptionId && (comment.assetVersionId === legacyOptionId || comment.optionId === legacyOptionId)) return true;
+
+  return asset.versions.length <= 1 && !comment.assetVersionId && !comment.optionId;
+}
+
 export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: ReviewWorkspaceProps) {
   const isCreator = mode === 'creator';
   const router = useRouter();
@@ -200,11 +211,13 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const activeAsset = review.assets.find((asset) => asset.id === activeAssetId) ?? review.assets[0];
   const activeVersion = activeAsset?.versions.find((version) => version.id === activeVersionId) ?? activeAsset?.versions[0];
   const activeVersionIndex = Math.max(0, activeAsset?.versions.findIndex((version) => version.id === activeVersion?.id) ?? 0);
-  const assetComments = review.comments.filter((comment) => comment.assetId === activeAsset?.id && comment.assetVersionId === activeVersion?.id && !comment.parentCommentId);
+  const topLevelComments = review.comments.filter((comment) => !comment.parentCommentId);
+  const assetComments = topLevelComments.filter((comment) => commentMatchesAssetVersion(comment, activeAsset, activeVersion));
   const filteredAssetComments = assetComments.filter((comment) => commentFilter === 'all' || (comment.status ?? 'open') === commentFilter);
+  const commentsOutsideActiveVersion = topLevelComments.filter((comment) => !commentMatchesAssetVersion(comment, activeAsset, activeVersion));
   const openCommentCount = getOpenCommentCount(review.comments);
   const resolvedCommentCount = getResolvedCommentCount(review.comments);
-  const totalComments = review.comments.filter((comment) => !comment.parentCommentId).length;
+  const totalComments = topLevelComments.length;
   const hasMultipleVersions = (activeAsset?.versions.length ?? 0) > 1;
   const shareSummary = useMemo(() => {
     const parts = [review.shareSettings.reviewerNameRequired ? 'name required' : 'name optional'];
@@ -266,6 +279,25 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       return false;
     }
     return true;
+  };
+
+  const getCommentLocationLabel = (comment: Comment) => {
+    const commentAsset = review.assets.find((asset) => asset.id === comment.assetId);
+    const commentVersion = commentAsset?.versions.find((version) => commentMatchesAssetVersion(comment, commentAsset, version));
+
+    return [commentAsset?.title, commentVersion?.label].filter(Boolean).join(' / ') || 'Unknown location';
+  };
+
+  const focusComment = (comment: Comment) => {
+    const commentAsset = review.assets.find((asset) => asset.id === comment.assetId);
+    const commentVersion = commentAsset?.versions.find((version) => commentMatchesAssetVersion(comment, commentAsset, version));
+    const nextVersionId = commentVersion?.id ?? comment.assetVersionId ?? commentAsset?.versions[0]?.id ?? '';
+
+    setActiveAssetId(comment.assetId);
+    setActiveVersionId(nextVersionId);
+    setActiveCommentId(comment.id);
+    setCommentFilter('all');
+    setRightTab('notes');
   };
 
   const copyReviewLink = async () => {
@@ -744,6 +776,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     try {
       await saveReviewerFeedback({
         reviewId: review.id,
+        shareToken: review.shareToken,
         reviewerName: reviewerName || 'Reviewer',
         body: review.overallFeedback.trim(),
       });
@@ -762,6 +795,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     try {
       await saveReviewerDecision({
         reviewId: review.id,
+        shareToken: review.shareToken,
         assetVersionId: assetVersionId ?? null,
         reviewerName: reviewerName || 'Reviewer',
         type,
@@ -1140,9 +1174,42 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                     </div>
                   ) : null}
                 </article>
-              )) : (
+              )) : !assetComments.length && commentsOutsideActiveVersion.length > 0 ? (
+                <div className="rounded-[10px] border border-dashed border-stone-300 bg-stone-50 px-3 py-3 text-sm text-stone-600">
+                  <p>No pinned notes on this version.</p>
+                  <button
+                    type="button"
+                    onClick={() => focusComment(commentsOutsideActiveVersion[0])}
+                    className="mt-2 rounded-[8px] bg-stone-950 px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    Show first note
+                  </button>
+                </div>
+              ) : (
                 <p className="rounded-[10px] border border-dashed border-stone-300 bg-stone-50 px-3 py-3 text-sm text-stone-600">{review.shareSettings.allowComments || isCreator ? 'Click the preview to add a pinned note.' : 'Comments are disabled for this review.'}</p>
               )}
+
+              {commentsOutsideActiveVersion.length > 0 ? (
+                <div className="rounded-[10px] border border-stone-200 bg-white px-3 py-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">Elsewhere in review</p>
+                  <div className="mt-2 space-y-2">
+                    {commentsOutsideActiveVersion.slice(0, 4).map((comment) => (
+                      <button
+                        key={comment.id}
+                        type="button"
+                        onClick={() => focusComment(comment)}
+                        className="block w-full rounded-[8px] bg-stone-50 px-2.5 py-2 text-left text-xs text-stone-700 hover:bg-stone-100"
+                      >
+                        <span className="block font-semibold text-stone-950">{getCommentLocationLabel(comment)}</span>
+                        <span className="mt-1 block truncate">{comment.text}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {commentsOutsideActiveVersion.length > 4 ? (
+                    <p className="mt-2 text-xs text-stone-500">+{commentsOutsideActiveVersion.length - 4} more on other assets or versions.</p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="mt-4">

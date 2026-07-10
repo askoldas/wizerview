@@ -12,6 +12,16 @@ interface PinCommentLayerProps {
   onSelectComment: (commentId: string | null) => void;
 }
 
+function commentMatchesVersion(comment: Comment, asset: ReviewAsset, version?: AssetVersion) {
+  if (!version || comment.assetId !== asset.id) return false;
+  if (comment.assetVersionId === version.id) return true;
+
+  const legacyOptionId = typeof version.metadata?.legacyOptionId === 'string' ? version.metadata.legacyOptionId : null;
+  if (legacyOptionId && (comment.assetVersionId === legacyOptionId || comment.optionId === legacyOptionId)) return true;
+
+  return asset.versions.length <= 1 && !comment.assetVersionId && !comment.optionId;
+}
+
 export function PinCommentLayer({ asset, version, comments, onAddComment, activeCommentId, onSelectComment }: PinCommentLayerProps) {
   const [draftText, setDraftText] = useState('');
   const [activePin, setActivePin] = useState<{ x: number; y: number } | null>(null);
@@ -53,7 +63,7 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
       ) : null}
 
       {comments
-        .filter((comment) => comment.assetId === asset.id && comment.assetVersionId === version?.id && !comment.parentCommentId && comment.x != null && comment.y != null)
+        .filter((comment) => commentMatchesVersion(comment, asset, version) && !comment.parentCommentId && comment.x != null && comment.y != null)
         .map((comment, index) => (
           <button
             key={comment.id}
