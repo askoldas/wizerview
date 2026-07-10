@@ -1,19 +1,24 @@
 "use client";
 
+import type { ReactNode } from 'react';
 import type { AssetVersion, ReviewAsset } from '@/lib/mock-data';
 
 interface AssetSurfaceProps {
   asset: ReviewAsset;
   version?: AssetVersion;
+  overlay?: ReactNode;
 }
 
-export function AssetSurface({ asset, version }: AssetSurfaceProps) {
+export function AssetSurface({ asset, version, overlay }: AssetSurfaceProps) {
   if (version?.previewUrl && version.status === 'ready') {
     return (
-      <div className="mx-auto flex min-h-[430px] max-w-[860px] items-center justify-center rounded-[12px] border border-stone-200 bg-[#efede7] p-4 shadow-sm">
-        <div className="relative w-full overflow-hidden rounded-[12px] border border-stone-200 bg-white shadow-sm">
+      <div className="mx-auto max-w-[1040px] rounded-[12px] border border-stone-200 bg-[#efede7] p-4 shadow-sm">
+        <div className="max-h-[min(72vh,820px)] overflow-auto overscroll-contain rounded-[12px] border border-stone-200 bg-white shadow-sm [contain:layout_paint]">
+          <div className="relative w-full">
           {/* eslint-disable-next-line @next/next/no-img-element -- Review previews may be blob or storage URLs. */}
-          <img src={version.previewUrl} alt={`${asset.title} ${version.label}`} className="block h-auto w-full" />
+            <img src={version.previewUrl} alt={`${asset.title} ${version.label}`} decoding="async" className="block h-auto w-full" />
+            {overlay}
+          </div>
         </div>
       </div>
     );

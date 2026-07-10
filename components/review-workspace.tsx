@@ -974,18 +974,21 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                       </div>
                     </div>
                   ) : (
-                    <AssetSurface asset={activeAsset} version={activeVersion} />
-                  )}
-                  {activeVersionHasPreview && showPins && (isCreator || review.shareSettings.allowComments) ? (
-                    <PinCommentLayer
+                    <AssetSurface
                       asset={activeAsset}
                       version={activeVersion}
-                      comments={review.comments}
-                      onAddComment={handleAddComment}
-                      activeCommentId={activeCommentId}
-                      onSelectComment={setActiveCommentId}
+                      overlay={activeVersionHasPreview && showPins && (isCreator || review.shareSettings.allowComments) ? (
+                        <PinCommentLayer
+                          asset={activeAsset}
+                          version={activeVersion}
+                          comments={review.comments}
+                          onAddComment={handleAddComment}
+                          activeCommentId={activeCommentId}
+                          onSelectComment={setActiveCommentId}
+                        />
+                      ) : null}
                     />
-                  ) : null}
+                  )}
                 </>
               ) : (
                 <div className="flex min-h-[440px] items-center justify-center rounded-[12px] border border-dashed border-stone-300 bg-stone-50 text-center">
