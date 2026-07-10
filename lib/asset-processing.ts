@@ -39,11 +39,15 @@ export interface ProcessedPdfPreview extends ProcessedPreview {
   pageCount: number;
 }
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const MAX_FREE_PDF_PAGES = 10;
-const PREVIEW_WIDTH = 1600;
+const DEFAULT_PREVIEW_WIDTH = 1600;
+const TALL_PREVIEW_WIDTH = 1800;
+const DEFAULT_PREVIEW_MAX_PIXELS = 6_000_000;
+const TALL_PREVIEW_MAX_PIXELS = 18_000_000;
 const THUMBNAIL_WIDTH = 320;
+const THUMBNAIL_MAX_HEIGHT = 2400;
 
 function createPlaceholderUrl(label: string, kind: 'preview' | 'thumb') {
   const svg = `
@@ -98,15 +102,41 @@ function sanitizePathSegment(value: string) {
     .replace(/^-|-$/g, '') || 'asset';
 }
 
-async function createOptimizedImageBlob(file: File, options: { maxWidth: number; maxHeight: number; quality: number; mimeType: 'image/webp' }) {
+function getPreviewProfile(width: number, height: number) {
+  const aspectRatio = height / width;
+  const isTallScreenshot = aspectRatio >= 2.4;
+
+  return {
+    maxWidth: isTallScreenshot ? TALL_PREVIEW_WIDTH : DEFAULT_PREVIEW_WIDTH,
+    maxPixels: isTallScreenshot ? TALL_PREVIEW_MAX_PIXELS : DEFAULT_PREVIEW_MAX_PIXELS,
+    quality: isTallScreenshot ? 0.9 : 0.82,
+  };
+}
+
+function getConstrainedImageSize(width: number, height: number, options: { maxWidth: number; maxPixels: number }) {
+  const widthScale = Math.min(1, options.maxWidth / width);
+  const pixelScale = Math.min(1, Math.sqrt(options.maxPixels / (width * height)));
+  const scale = Math.min(widthScale, pixelScale);
+
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+async function createOptimizedImageBlob(file: File, options: { maxWidth?: number; maxPixels?: number; quality?: number; mimeType: 'image/webp' }) {
   if (typeof window === 'undefined' || typeof createImageBitmap === 'undefined' || typeof document === 'undefined') {
     throw new Error('Image optimization is only available in a browser.');
   }
 
   const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, options.maxWidth / bitmap.width, options.maxHeight / bitmap.height);
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const profile = getPreviewProfile(bitmap.width, bitmap.height);
+  const size = getConstrainedImageSize(bitmap.width, bitmap.height, {
+    maxWidth: options.maxWidth ?? profile.maxWidth,
+    maxPixels: options.maxPixels ?? profile.maxPixels,
+  });
+  const width = size.width;
+  const height = size.height;
 
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -118,8 +148,10 @@ async function createOptimizedImageBlob(file: File, options: { maxWidth: number;
     throw new Error('Could not prepare an image canvas for optimization.');
   }
 
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
   context.drawImage(bitmap, 0, 0, width, height);
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, options.mimeType, options.quality));
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, options.mimeType, options.quality ?? profile.quality));
   bitmap.close?.();
   if (!blob) {
     throw new Error('Could not generate an optimized WebP preview.');
@@ -165,15 +197,12 @@ export async function processImagePreview(file: File): Promise<ProcessedPreview>
   if (!validation.valid) throw new Error(validation.reason);
 
   const previewResult = await createOptimizedImageBlob(file, {
-    maxWidth: PREVIEW_WIDTH,
-    maxHeight: 4000,
-    quality: 0.82,
     mimeType: 'image/webp',
   });
 
   const thumbnailResult = await createOptimizedImageBlob(file, {
     maxWidth: THUMBNAIL_WIDTH,
-    maxHeight: 2000,
+    maxPixels: THUMBNAIL_WIDTH * THUMBNAIL_MAX_HEIGHT,
     quality: 0.68,
     mimeType: 'image/webp',
   });
@@ -194,7 +223,7 @@ export async function processImagePreview(file: File): Promise<ProcessedPreview>
       : createPlaceholderUrl(file.name, 'thumb'));
 
   const previewBytes = previewBlob.size;
-  const width = previewResult?.width ?? PREVIEW_WIDTH;
+  const width = previewResult?.width ?? DEFAULT_PREVIEW_WIDTH;
   const height = previewResult?.height ?? 900;
 
   return {
@@ -238,7 +267,7 @@ export async function processPdfPreview(file: File): Promise<ProcessedPdfPreview
     thumbnailUrl,
     previewMimeType: 'image/webp',
     previewBytes,
-    width: PREVIEW_WIDTH,
+    width: DEFAULT_PREVIEW_WIDTH,
     height: 1800,
     status: 'ready',
     storageHint: `PDF pages prepared for review with ${pageCount} page preview(s).`,
@@ -253,7 +282,7 @@ export async function processPdfPreview(file: File): Promise<ProcessedPdfPreview
       thumbnailUrl,
       previewMimeType: 'image/webp' as const,
       previewBytes: Math.max(60_000, Math.round(previewBytes / (index + 1))),
-      width: PREVIEW_WIDTH,
+      width: DEFAULT_PREVIEW_WIDTH,
       height: 1800,
       status: 'ready' as const,
       storageHint: `Page ${index + 1} preview generated.`,

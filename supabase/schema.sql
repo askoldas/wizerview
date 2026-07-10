@@ -430,7 +430,7 @@ $$;
 drop policy if exists "Prototype can create shared reviews" on public.reviews;
 
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('review-previews', 'review-previews', true, 5242880, array['image/webp', 'image/jpeg', 'image/png'])
+values ('review-previews', 'review-previews', true, 15728640, array['image/webp', 'image/jpeg', 'image/png'])
 on conflict (id) do update
 set public = excluded.public,
     file_size_limit = excluded.file_size_limit,
