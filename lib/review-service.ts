@@ -32,6 +32,7 @@ export type ReviewerDecisionType = 'approved' | 'changes_requested' | 'direction
 
 export interface ReviewerDecisionInput {
   reviewId: string;
+  shareToken?: string;
   assetVersionId?: string | null;
   reviewerName: string;
   type: ReviewerDecisionType;
@@ -40,6 +41,7 @@ export interface ReviewerDecisionInput {
 
 export interface ReviewerFeedbackInput {
   reviewId: string;
+  shareToken?: string;
   reviewerName: string;
   body: string;
 }
@@ -61,7 +63,50 @@ export interface CommentStatusInput {
 interface ReviewRow {
   id: string;
   share_token: string | null;
+  title?: string | null;
+  client_name?: string | null;
+  instructions?: string | null;
+  reviewer_name_required?: boolean | null;
+  pin_protection_enabled?: boolean | null;
+  allow_comments?: boolean | null;
+  allow_decisions?: boolean | null;
   content: ReviewData | null;
+}
+
+interface AssetRow {
+  id: string;
+  review_id: string;
+  type: string | null;
+  title: string | null;
+  description: string | null;
+  sort_order: number | null;
+  status?: string | null;
+  metadata?: Record<string, unknown> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+interface AssetVersionRow {
+  id: string;
+  review_id: string;
+  asset_id: string;
+  label: string | null;
+  version_number: number | null;
+  sort_order: number | null;
+  source_url: string | null;
+  preview_url: string | null;
+  thumbnail_url: string | null;
+  storage_path: string | null;
+  mime_type: string | null;
+  width: number | null;
+  height: number | null;
+  page_count: number | null;
+  preview_bytes: number | null;
+  processing_status: AssetVersion['status'] | null;
+  status: AssetVersion['status'] | null;
+  metadata?: Record<string, unknown> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 interface ActivityRow {
@@ -170,6 +215,21 @@ function dbAssetType(assetType: string) {
   return assetType === 'image' || assetType === 'pdf' ? assetType : 'screenshot';
 }
 
+function appAssetType(assetType?: string | null): ReviewAsset['assetType'] {
+  if (assetType === 'image' || assetType === 'screenshot' || assetType === 'pdf') return assetType;
+  return 'screenshot';
+}
+
+function readStringMetadata(metadata: Record<string, unknown> | null | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function readNumberMetadata(metadata: Record<string, unknown> | null | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === 'number' ? value : undefined;
+}
+
 function mergeComments(snapshotComments: Comment[], tableComments: Comment[]) {
   const byId = new Map<string, Comment>();
   flattenComments(snapshotComments).forEach((comment) => byId.set(comment.id, { ...comment, replies: [] }));
@@ -267,8 +327,16 @@ async function syncReviewRows(review: ReviewData) {
     type: dbAssetType(asset.assetType),
     title: asset.title,
     description: asset.description,
+    asset_type: dbAssetType(asset.assetType),
+    status: asset.status ?? 'in_review',
+    metadata: {
+      accent: asset.accent,
+      notes: asset.notes,
+      instructions: asset.instructions ?? null,
+    },
     processing_status: 'ready',
     sort_order: sortOrder,
+    updated_at: new Date().toISOString(),
   }));
 
   if (assetRows.length > 0) {
@@ -316,6 +384,102 @@ async function syncReviewRows(review: ReviewData) {
       console.warn('Failed to sync asset versions to Supabase. Apply the asset_versions migration to enable structured version rows:', error.message);
     }
   }
+}
+
+function mapStructuredAssets(baseReview: ReviewData, assetRows: AssetRow[], versionRows: AssetVersionRow[]) {
+  if (assetRows.length === 0) return baseReview.assets;
+
+  return [...assetRows]
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+    .map((assetRow, assetIndex) => {
+      const snapshotAsset = baseReview.assets.find((asset) => asset.id === assetRow.id);
+      const versions = versionRows
+        .filter((version) => version.asset_id === assetRow.id)
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
+        .map((versionRow, versionIndex) => {
+          const snapshotVersion = snapshotAsset?.versions.find((version) => version.id === versionRow.id);
+          const metadata = versionRow.metadata ?? {};
+
+          return {
+            ...snapshotVersion,
+            id: versionRow.id,
+            assetId: versionRow.asset_id,
+            reviewId: versionRow.review_id,
+            label: versionRow.label ?? snapshotVersion?.label ?? versionLabel(versionIndex),
+            versionNumber: versionRow.version_number ?? snapshotVersion?.versionNumber ?? versionIndex + 1,
+            sortOrder: versionRow.sort_order ?? snapshotVersion?.sortOrder ?? versionIndex,
+            sourceUrl: versionRow.source_url ?? snapshotVersion?.sourceUrl,
+            originalName: readStringMetadata(metadata, 'originalName') ?? snapshotVersion?.originalName,
+            originalMimeType: readStringMetadata(metadata, 'originalMimeType') ?? snapshotVersion?.originalMimeType,
+            originalBytes: readNumberMetadata(metadata, 'originalBytes') ?? snapshotVersion?.originalBytes,
+            previewUrl: versionRow.preview_url ?? snapshotVersion?.previewUrl,
+            thumbnailUrl: versionRow.thumbnail_url ?? snapshotVersion?.thumbnailUrl,
+            previewMimeType: (readStringMetadata(metadata, 'previewMimeType') as AssetVersion['previewMimeType']) ?? snapshotVersion?.previewMimeType,
+            previewBytes: versionRow.preview_bytes ?? snapshotVersion?.previewBytes,
+            storagePath: versionRow.storage_path ?? snapshotVersion?.storagePath,
+            thumbnailStoragePath: readStringMetadata(metadata, 'thumbnailStoragePath') ?? snapshotVersion?.thumbnailStoragePath,
+            mimeType: versionRow.mime_type ?? snapshotVersion?.mimeType,
+            width: versionRow.width ?? snapshotVersion?.width,
+            height: versionRow.height ?? snapshotVersion?.height,
+            pageNumber: readNumberMetadata(metadata, 'pageNumber') ?? snapshotVersion?.pageNumber,
+            pageCount: versionRow.page_count ?? snapshotVersion?.pageCount,
+            status: versionRow.processing_status ?? versionRow.status ?? snapshotVersion?.status ?? 'idle',
+            storageHint: readStringMetadata(metadata, 'storageHint') ?? snapshotVersion?.storageHint,
+            metadata,
+            createdAt: versionRow.created_at ?? snapshotVersion?.createdAt,
+            updatedAt: versionRow.updated_at ?? snapshotVersion?.updatedAt,
+          };
+        });
+
+      return {
+        ...snapshotAsset,
+        id: assetRow.id,
+        reviewId: assetRow.review_id,
+        title: assetRow.title ?? snapshotAsset?.title ?? 'Review asset',
+        description: assetRow.description ?? snapshotAsset?.description ?? '',
+        instructions: readStringMetadata(assetRow.metadata, 'instructions') ?? snapshotAsset?.instructions,
+        assetType: appAssetType(assetRow.type),
+        sortOrder: assetRow.sort_order ?? snapshotAsset?.sortOrder ?? assetIndex,
+        status: (assetRow.status as ReviewAsset['status']) ?? snapshotAsset?.status ?? 'in_review',
+        accent: readStringMetadata(assetRow.metadata, 'accent') ?? snapshotAsset?.accent ?? 'from-stone-700 via-stone-500 to-stone-200',
+        notes: readStringMetadata(assetRow.metadata, 'notes') ?? snapshotAsset?.notes ?? 'Ready for review.',
+        versions: versions.length > 0 ? versions : snapshotAsset?.versions ?? [],
+        metadata: assetRow.metadata ?? snapshotAsset?.metadata,
+        createdAt: assetRow.created_at ?? snapshotAsset?.createdAt,
+        updatedAt: assetRow.updated_at ?? snapshotAsset?.updatedAt,
+      };
+    });
+}
+
+async function loadStructuredRows(reviewId: string) {
+  const client = createSupabaseClientInstance();
+  if (!client) return { assetRows: [] as AssetRow[], versionRows: [] as AssetVersionRow[] };
+
+  const [assetsResult, versionsResult] = await Promise.all([
+    client
+      .from(ASSET_TABLE)
+      .select('id, review_id, type, title, description, sort_order, status, metadata, created_at, updated_at')
+      .eq('review_id', reviewId)
+      .order('sort_order', { ascending: true }),
+    client
+      .from(ASSET_VERSION_TABLE)
+      .select('id, review_id, asset_id, label, version_number, sort_order, source_url, preview_url, thumbnail_url, storage_path, mime_type, width, height, page_count, preview_bytes, processing_status, status, metadata, created_at, updated_at')
+      .eq('review_id', reviewId)
+      .order('sort_order', { ascending: true }),
+  ]);
+
+  if (assetsResult.error) {
+    console.warn('Failed to load structured assets; falling back to review snapshot:', assetsResult.error.message);
+  }
+
+  if (versionsResult.error) {
+    console.warn('Failed to load structured asset versions; falling back to review snapshot versions:', versionsResult.error.message);
+  }
+
+  return {
+    assetRows: (assetsResult.data ?? []) as AssetRow[],
+    versionRows: (versionsResult.data ?? []) as AssetVersionRow[],
+  };
 }
 
 async function loadCommentRows(reviewId: string): Promise<CommentRow[]> {
@@ -367,7 +531,19 @@ async function loadCommentRows(reviewId: string): Promise<CommentRow[]> {
 }
 
 async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
-  const review = normalizeReviewData((row.content ?? createEmptyReviewData(row.id)) as ReviewData);
+  const review = normalizeReviewData({
+    ...(row.content ?? createEmptyReviewData(row.id)),
+    id: row.id,
+    title: row.title ?? row.content?.title,
+    client: row.client_name ?? row.content?.client,
+    instructions: row.instructions ?? row.content?.instructions,
+    shareSettings: {
+      reviewerNameRequired: row.reviewer_name_required ?? row.content?.shareSettings?.reviewerNameRequired ?? true,
+      pinProtection: row.pin_protection_enabled ?? row.content?.shareSettings?.pinProtection ?? false,
+      allowComments: row.allow_comments ?? row.content?.shareSettings?.allowComments ?? true,
+      allowDecisions: row.allow_decisions ?? row.content?.shareSettings?.allowDecisions ?? true,
+    },
+  } as ReviewData);
   const reviewWithMetadata = {
     ...review,
     id: row.id,
@@ -377,7 +553,10 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
   const client = createSupabaseClientInstance();
   if (!client) return reviewWithMetadata;
 
-  const commentRows = await loadCommentRows(row.id);
+  const [{ assetRows, versionRows }, commentRows] = await Promise.all([
+    loadStructuredRows(row.id),
+    loadCommentRows(row.id),
+  ]);
   const tableComments = commentRows.map((comment) => ({
     id: comment.id,
     reviewId: comment.review_id,
@@ -435,14 +614,49 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
 
   const latestDecision = decisionRows?.[0];
 
-  return {
+  const creatorReview = {
     ...reviewWithMetadata,
+    assets: mapStructuredAssets(reviewWithMetadata, assetRows, versionRows),
     comments: mergeComments(reviewWithMetadata.comments, tableComments),
     overallFeedback: feedbackRows?.[0]?.body ?? reviewWithMetadata.overallFeedback,
     decision: latestDecision?.note ?? reviewWithMetadata.decision,
     selectedDirection: latestDecision?.asset_version_id ?? latestDecision?.option_id ?? reviewWithMetadata.selectedDirection,
     selectedAssetVersionId: latestDecision?.asset_version_id ?? latestDecision?.option_id ?? reviewWithMetadata.selectedAssetVersionId,
   };
+
+  if (row.share_token) {
+    const sharedReview = await loadSharedReviewPayload(client, row.share_token);
+
+    if (sharedReview) {
+      return {
+        ...creatorReview,
+        assets: sharedReview.assets,
+        comments: sharedReview.comments,
+        overallFeedback: sharedReview.overallFeedback,
+        decision: sharedReview.decision,
+        selectedDirection: sharedReview.selectedDirection,
+        selectedAssetVersionId: sharedReview.selectedAssetVersionId,
+      };
+    }
+  }
+
+  return creatorReview;
+}
+
+function normalizeSharedReviewPayload(payload: unknown, shareToken: string): ReviewData | null {
+  if (!payload || typeof payload !== 'object') return null;
+  return normalizeReviewData({ ...(payload as ReviewData), shareToken });
+}
+
+async function loadSharedReviewPayload(client: NonNullable<ReturnType<typeof createSupabaseClientInstance>>, shareToken: string) {
+  const { data, error } = await client.rpc('get_shared_review', { p_share_token: shareToken });
+
+  if (error) {
+    console.error('Failed to load shared review from Supabase:', error.message);
+    return null;
+  }
+
+  return normalizeSharedReviewPayload(data, shareToken);
 }
 
 export async function loadReviewById(reviewId: string): Promise<ReviewData> {
@@ -462,7 +676,7 @@ export async function loadReviewById(reviewId: string): Promise<ReviewData> {
 
   const { data, error } = await client
     .from(REVIEW_TABLE)
-    .select('id, share_token, content')
+    .select('id, share_token, title, client_name, instructions, reviewer_name_required, pin_protection_enabled, allow_comments, allow_decisions, content')
     .eq('id', reviewId)
     .eq('owner_id', userData.user.id)
     .maybeSingle();
@@ -509,19 +723,9 @@ export async function loadReviewByShareToken(shareToken: string): Promise<Review
     return { ...initialReview, shareToken };
   }
 
-  const { data, error } = await client
-    .from(REVIEW_TABLE)
-    .select('id, share_token, content')
-    .eq('share_token', shareToken)
-    .not('status', 'in', '("draft","archived")')
-    .maybeSingle();
+  const sharedReview = await loadSharedReviewPayload(client, shareToken);
 
-  if (error) {
-    console.error('Failed to load shared review from Supabase:', error.message);
-    return { ...initialReview, shareToken };
-  }
-
-  if (!data) {
+  if (!sharedReview) {
     return {
       ...createEmptyReviewData('shared-review-unavailable'),
       shareToken,
@@ -531,7 +735,7 @@ export async function loadReviewByShareToken(shareToken: string): Promise<Review
     };
   }
 
-  return hydrateReviewFromRow(data as ReviewRow);
+  return sharedReview;
 }
 
 export async function loadReview(reviewId: string): Promise<ReviewData> {
@@ -977,6 +1181,29 @@ export async function saveComment(review: ReviewData, comment: Comment): Promise
     status: 'open',
   };
 
+  if (review.shareToken && (comment.authorRole ?? 'reviewer') === 'reviewer') {
+    const { error } = await client.rpc('add_shared_comment', {
+      p_share_token: review.shareToken,
+      p_comment_id: comment.id,
+      p_review_id: review.id,
+      p_asset_id: comment.assetId,
+      p_asset_version_id: assetVersionId,
+      p_parent_comment_id: null,
+      p_author_name: comment.author,
+      p_body: comment.text,
+      p_x_percent: comment.x ?? null,
+      p_y_percent: comment.y ?? null,
+      p_page_number: comment.pageNumber ?? null,
+    });
+
+    if (error) {
+      console.error('Failed to save shared comment to Supabase:', error.message);
+      throw new Error(`Failed to save comment: ${error.message}`);
+    }
+
+    return;
+  }
+
   const { error } = await client.from(COMMENT_TABLE).insert(commentRow);
 
   if (error) {
@@ -1034,6 +1261,29 @@ export async function saveCommentReply(input: CommentReplyInput): Promise<Commen
     body: input.body,
     status: 'open',
   };
+
+  if (input.review.shareToken && input.authorRole === 'reviewer') {
+    const { error } = await client.rpc('add_shared_comment', {
+      p_share_token: input.review.shareToken,
+      p_comment_id: reply.id,
+      p_review_id: input.review.id,
+      p_asset_id: reply.assetId,
+      p_asset_version_id: reply.assetVersionId ?? null,
+      p_parent_comment_id: input.parentCommentId,
+      p_author_name: input.authorName,
+      p_body: input.body,
+      p_x_percent: null,
+      p_y_percent: null,
+      p_page_number: null,
+    });
+
+    if (error) {
+      console.error('Failed to save shared reply to Supabase:', error.message);
+      throw new Error(`Failed to save reply: ${error.message}`);
+    }
+
+    return reply;
+  }
 
   const { error } = await client.from(COMMENT_TABLE).insert(replyRow);
 
@@ -1117,6 +1367,23 @@ export async function saveReviewerFeedback(input: ReviewerFeedbackInput): Promis
     ? crypto.randomUUID()
     : `feedback-${Date.now()}`;
 
+  if (input.shareToken) {
+    const { error } = await client.rpc('add_shared_feedback', {
+      p_share_token: input.shareToken,
+      p_feedback_id: feedbackId,
+      p_review_id: input.reviewId,
+      p_reviewer_name: input.reviewerName,
+      p_body: input.body,
+    });
+
+    if (error) {
+      console.error('Failed to save shared feedback to Supabase:', error.message);
+      throw new Error(`Failed to save feedback: ${error.message}`);
+    }
+
+    return;
+  }
+
   const { error } = await client.from(FEEDBACK_TABLE).insert({
     id: feedbackId,
     review_id: input.reviewId,
@@ -1153,6 +1420,25 @@ export async function saveReviewerDecision(input: ReviewerDecisionInput): Promis
     type: input.type,
     note: input.note,
   };
+
+  if (input.shareToken) {
+    const { error } = await client.rpc('add_shared_decision', {
+      p_share_token: input.shareToken,
+      p_decision_id: decisionId,
+      p_review_id: input.reviewId,
+      p_asset_version_id: input.assetVersionId ?? null,
+      p_reviewer_name: input.reviewerName,
+      p_type: input.type,
+      p_note: input.note,
+    });
+
+    if (error) {
+      console.error('Failed to save shared decision to Supabase:', error.message);
+      throw new Error(`Failed to save decision: ${error.message}`);
+    }
+
+    return;
+  }
 
   const { error } = await client.from(DECISION_TABLE).insert(decisionRow);
 
