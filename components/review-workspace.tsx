@@ -54,6 +54,29 @@ function formatByteSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
+function getReviewSaveSignature(review: ReviewData) {
+  return JSON.stringify({
+    ...review,
+    shareToken: undefined,
+  });
+}
+
+function hasPendingAssetProcessing(review: ReviewData) {
+  return review.assets.some((asset) =>
+    asset.versions.some((version) => version.status === 'processing' || version.status === 'uploading')
+  );
+}
+
+function collectObjectUrls(review: ReviewData) {
+  return new Set(
+    review.assets.flatMap((asset) =>
+      asset.versions.flatMap((version) =>
+        [version.previewUrl, version.thumbnailUrl].filter((url): url is string => Boolean(url?.startsWith('blob:')))
+      )
+    )
+  );
+}
+
 export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: ReviewWorkspaceProps) {
   const isCreator = mode === 'creator';
   const router = useRouter();
@@ -90,6 +113,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     author: string;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const savedReviewSignatureRef = useRef(getReviewSaveSignature(fallbackReview));
+  const objectUrlsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!isCreator || !supabase) {
@@ -127,6 +152,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       const firstAsset = loaded.assets[0];
       const firstVersion = firstAsset?.versions[0];
 
+      savedReviewSignatureRef.current = getReviewSaveSignature(loaded);
       setReview(loaded);
       setActiveAssetId(firstAsset?.id ?? '');
       setActiveVersionId(firstVersion?.id ?? '');
@@ -138,6 +164,23 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       ignored = true;
     };
   }, [fallbackReviewId, shareToken]);
+
+  useEffect(() => {
+    const nextObjectUrls = collectObjectUrls(review);
+    objectUrlsRef.current.forEach((url) => {
+      if (!nextObjectUrls.has(url)) {
+        URL.revokeObjectURL(url);
+      }
+    });
+    objectUrlsRef.current = nextObjectUrls;
+  }, [review]);
+
+  useEffect(() => {
+    return () => {
+      objectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      objectUrlsRef.current = new Set();
+    };
+  }, []);
 
   const activeAsset = review.assets.find((asset) => asset.id === activeAssetId) ?? review.assets[0];
   const activeVersion = activeAsset?.versions.find((version) => version.id === activeVersionId) ?? activeAsset?.versions[0];
@@ -168,14 +211,27 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     if (!isCreator || !isReviewLoaded) return;
     if (isCheckingAuth) return;
     if (isSupabaseConfigured() && !authUser) return;
+    if (hasPendingAssetProcessing(review)) return;
 
+    const saveSignature = getReviewSaveSignature(review);
+    if (saveSignature === savedReviewSignatureRef.current) return;
+
+    let cancelled = false;
     const timer = window.setTimeout(() => {
-      saveReview(review).catch((error) => {
+      saveReview(review).then(() => {
+        if (!cancelled) {
+          savedReviewSignatureRef.current = saveSignature;
+        }
+      }).catch((error) => {
+        if (cancelled) return;
         setSaveMessage(error instanceof Error ? error.message : 'Autosave failed.');
       });
     }, 400);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [authUser, isCheckingAuth, isCreator, isReviewLoaded, review]);
 
   useEffect(() => {
@@ -241,6 +297,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
 
     try {
       await saveReview(review);
+      savedReviewSignatureRef.current = getReviewSaveSignature(review);
       setSaveMessage('Saved.');
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : 'Save failed.');

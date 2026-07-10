@@ -181,17 +181,17 @@ export async function processImagePreview(file: File): Promise<ProcessedPreview>
   const previewBlob = previewResult.blob;
   const thumbnailBlob = thumbnailResult.blob;
 
-  const previewUrl = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function'
-    ? URL.createObjectURL(previewBlob)
-    : createPlaceholderUrl(file.name, 'preview');
-
   const uploadedPreview = await uploadOptimizedPreviewToSupabase(previewBlob, file.name);
   const uploadedThumbnail = await uploadOptimizedPreviewToSupabase(thumbnailBlob, `${file.name}-thumb`);
 
-  const resolvedPreviewUrl = uploadedPreview?.url ?? previewUrl;
-  const resolvedThumbnailUrl = uploadedThumbnail?.url ?? (typeof window !== 'undefined' && typeof URL.createObjectURL === 'function'
-    ? URL.createObjectURL(thumbnailBlob)
-    : createPlaceholderUrl(file.name, 'thumb'));
+  const resolvedPreviewUrl = uploadedPreview?.url
+    ?? (typeof window !== 'undefined' && typeof URL.createObjectURL === 'function'
+      ? URL.createObjectURL(previewBlob)
+      : createPlaceholderUrl(file.name, 'preview'));
+  const resolvedThumbnailUrl = uploadedThumbnail?.url
+    ?? (typeof window !== 'undefined' && typeof URL.createObjectURL === 'function'
+      ? URL.createObjectURL(thumbnailBlob)
+      : createPlaceholderUrl(file.name, 'thumb'));
 
   const previewBytes = previewBlob.size;
   const width = previewResult?.width ?? PREVIEW_WIDTH;
@@ -222,13 +222,8 @@ export async function processPdfPreview(file: File): Promise<ProcessedPdfPreview
 
   await new Promise((resolve) => setTimeout(resolve, 900));
 
-  const previewUrl = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function'
-    ? URL.createObjectURL(file)
-    : createPlaceholderUrl(file.name, 'preview');
-
-  const thumbnailUrl = typeof window !== 'undefined' && typeof URL.createObjectURL === 'function'
-    ? URL.createObjectURL(file)
-    : createPlaceholderUrl(file.name, 'thumb');
+  const previewUrl = createPlaceholderUrl(file.name, 'preview');
+  const thumbnailUrl = createPlaceholderUrl(file.name, 'thumb');
 
   const previewBytes = Math.max(120_000, Math.round(file.size * 0.12));
   const pageCount = Math.min(3, MAX_FREE_PDF_PAGES);
