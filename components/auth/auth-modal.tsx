@@ -40,10 +40,10 @@ export function AuthModal({ embeddedMode, defaultNext = '/dashboard' }: AuthModa
   }, [requestedMode, isOpen]);
 
   useEffect(() => {
-    if (!supabase) return;
+    if (!supabase || !isOpen) return;
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user && isOpen) router.push(next || '/dashboard');
+      if (session?.user) router.push(next || '/dashboard');
     });
 
     return () => listener.subscription.unsubscribe();
