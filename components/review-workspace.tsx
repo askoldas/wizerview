@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { FiClipboard, FiTrash2, FiUploadCloud } from 'react-icons/fi';
+import { FiClipboard, FiDownload, FiTrash2, FiUploadCloud } from 'react-icons/fi';
 import type { User } from '@supabase/supabase-js';
 import { AuthModal } from '@/components/auth/auth-modal';
 import { AssetSurface } from '@/components/asset-surface';
@@ -52,6 +52,21 @@ function formatByteSize(bytes: number) {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+function sanitizeDownloadName(value: string) {
+  return value
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/^-+|-+$/g, '') || 'wizerview-preview';
+}
+
+function getPreviewExtension(version?: AssetVersion) {
+  if (version?.previewMimeType === 'image/png') return 'png';
+  if (version?.previewMimeType === 'image/jpeg') return 'jpg';
+  if (version?.previewMimeType === 'image/webp') return 'webp';
+  return 'webp';
 }
 
 function getReviewSaveSignature(review: ReviewData) {
@@ -277,6 +292,21 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
 
     await navigator.clipboard.writeText(nextShareLink);
     setSaveMessage('Review link copied.');
+  };
+
+  const downloadActivePreview = () => {
+    if (!activeVersion?.previewUrl || typeof document === 'undefined') return;
+
+    const link = document.createElement('a');
+    const baseName = sanitizeDownloadName(activeVersion.originalName ?? `${activeAsset?.title ?? 'wizerview-preview'} ${activeVersion.label ?? ''}`);
+    const hasExtension = /\.[a-z0-9]{2,5}$/i.test(baseName);
+
+    link.href = activeVersion.previewUrl;
+    link.download = hasExtension ? baseName : `${baseName}.${getPreviewExtension(activeVersion)}`;
+    link.rel = 'noreferrer';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   };
 
   const updateShareSetting = (key: keyof ShareSettings, value: boolean) => {
@@ -925,8 +955,23 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                 <p className="text-sm font-semibold text-stone-950">{activeVersion?.label ?? versionLabel(activeVersionIndex)}</p>
                 <p className="text-sm text-stone-600">{activeAsset?.description ?? 'A preview-ready surface for the reviewer.'}</p>
               </div>
-              {!isCreator && hasMultipleVersions ? (
-                <button type="button" onClick={handleSelectVersion} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">Select this version</button>
+              {!isCreator ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {hasMultipleVersions ? (
+                    <button type="button" onClick={handleSelectVersion} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">Select this version</button>
+                  ) : null}
+                  {activeVersionHasPreview ? (
+                    <button
+                      type="button"
+                      onClick={downloadActivePreview}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] border border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
+                      aria-label="Download active preview"
+                      title="Download active preview"
+                    >
+                      <FiDownload aria-hidden="true" className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
               ) : null}
             </div>
 
@@ -1173,13 +1218,11 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           {isCreator ? (
             <>
               <button type="button" onClick={addVersion} className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">New version</button>
-              <button type="button" className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">Finish review</button>
               <button type="button" onClick={() => void copyReviewLink()} className="rounded-[8px] bg-stone-950 px-3 py-1.5 font-semibold text-white">Share</button>
             </>
           ) : (
             <>
               {review.shareSettings.allowComments ? <button type="button" onClick={() => setRightTab('feedback')} className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">Add general comment</button> : null}
-              <button type="button" className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">Download</button>
               <button type="button" onClick={() => void copyReviewLink()} className="rounded-[8px] bg-stone-950 px-3 py-1.5 font-semibold text-white">Share review link</button>
             </>
           )}
