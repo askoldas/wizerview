@@ -16,6 +16,10 @@ create table if not exists public.reviews (
   title text not null default 'Untitled review',
   client_name text,
   instructions text not null default '',
+  brief_message text not null default '',
+  brief_focus_points text[] not null default '{}'::text[],
+  brief_requested_outcome text not null default '',
+  brief_updated_at timestamptz,
   status text not null default 'draft' check (status in ('draft', 'in_review', 'changes_requested', 'direction_selected', 'approved', 'archived')),
   share_token text not null unique default encode(gen_random_bytes(24), 'hex'),
   reviewer_name_required boolean not null default true,
@@ -33,6 +37,10 @@ alter table public.reviews add column if not exists owner_id uuid references aut
 alter table public.reviews add column if not exists title text not null default 'Untitled review';
 alter table public.reviews add column if not exists client_name text;
 alter table public.reviews add column if not exists instructions text not null default '';
+alter table public.reviews add column if not exists brief_message text not null default '';
+alter table public.reviews add column if not exists brief_focus_points text[] not null default '{}'::text[];
+alter table public.reviews add column if not exists brief_requested_outcome text not null default '';
+alter table public.reviews add column if not exists brief_updated_at timestamptz;
 alter table public.reviews add column if not exists status text not null default 'draft';
 alter table public.reviews add column if not exists share_token text not null default encode(gen_random_bytes(24), 'hex');
 alter table public.reviews add column if not exists reviewer_name_required boolean not null default true;
@@ -467,6 +475,12 @@ begin
     'title', review_row.title,
     'client', coalesce(review_row.client_name, ''),
     'instructions', review_row.instructions,
+    'brief', jsonb_build_object(
+      'message', review_row.brief_message,
+      'focusPoints', to_jsonb(review_row.brief_focus_points),
+      'requestedOutcome', review_row.brief_requested_outcome,
+      'updatedAt', review_row.brief_updated_at
+    ),
     'shareSettings', jsonb_build_object(
       'reviewerNameRequired', review_row.reviewer_name_required,
       'pinProtection', review_row.pin_protection_enabled,

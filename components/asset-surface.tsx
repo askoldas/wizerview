@@ -13,13 +13,11 @@ interface AssetSurfaceProps {
 export function AssetSurface({ asset, version, overlay, scrollContainerRef }: AssetSurfaceProps) {
   if (version?.previewUrl && version.status === 'ready') {
     return (
-      <div className="mx-auto flex h-full w-full max-w-[1040px] flex-col rounded-[12px] border border-stone-200 bg-[#efede7] p-4 shadow-sm">
-        <div ref={scrollContainerRef} className="min-h-0 flex-1 overflow-auto overscroll-contain rounded-[12px] border border-stone-200 bg-white shadow-sm [contain:layout_paint]">
-          <div className="relative w-full">
+      <div ref={scrollContainerRef} className="mx-auto w-full max-w-[1120px] rounded-[12px] border border-stone-200 bg-white p-3 shadow-sm">
+        <div className="relative w-full overflow-visible">
           {/* eslint-disable-next-line @next/next/no-img-element -- Review previews may be blob or storage URLs. */}
-            <img src={version.previewUrl} alt={`${asset.title} ${version.label}`} decoding="async" className="block h-auto w-full" />
-            {overlay}
-          </div>
+          <img src={version.previewUrl} alt={`${asset.title} ${version.label}`} decoding="async" className="block h-auto w-full rounded-[8px]" />
+          {overlay}
         </div>
       </div>
     );

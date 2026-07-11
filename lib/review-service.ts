@@ -7,6 +7,8 @@ const ASSET_TABLE = 'assets';
 const ASSET_VERSION_TABLE = 'asset_versions';
 const DECISION_TABLE = 'decisions';
 const FEEDBACK_TABLE = 'review_feedback';
+const REVIEW_SELECT_WITH_BRIEF = 'id, share_token, title, client_name, instructions, brief_message, brief_focus_points, brief_requested_outcome, brief_updated_at, reviewer_name_required, pin_protection_enabled, allow_comments, allow_decisions, content';
+const REVIEW_SELECT_LEGACY = 'id, share_token, title, client_name, instructions, reviewer_name_required, pin_protection_enabled, allow_comments, allow_decisions, content';
 
 export interface ReviewSummary {
   id: string;
@@ -66,11 +68,44 @@ interface ReviewRow {
   title?: string | null;
   client_name?: string | null;
   instructions?: string | null;
+  brief_message?: string | null;
+  brief_focus_points?: string[] | null;
+  brief_requested_outcome?: string | null;
+  brief_updated_at?: string | null;
   reviewer_name_required?: boolean | null;
   pin_protection_enabled?: boolean | null;
   allow_comments?: boolean | null;
   allow_decisions?: boolean | null;
   content: ReviewData | null;
+}
+
+function isMissingBriefColumnError(error: { message?: string | null; code?: string | null } | null | undefined) {
+  const message = error?.message?.toLowerCase() ?? '';
+  return message.includes('brief_message') || message.includes('brief_focus_points') || message.includes('brief_requested_outcome') || message.includes('brief_updated_at');
+}
+
+function reviewUpsertPayload(review: ReviewData, ownerId: string, includeBriefColumns: boolean, extra: Record<string, unknown> = {}) {
+  return {
+    id: review.id,
+    owner_id: ownerId,
+    title: review.title,
+    client_name: review.client,
+    instructions: review.instructions,
+    ...(includeBriefColumns ? {
+      brief_message: review.brief.message,
+      brief_focus_points: review.brief.focusPoints,
+      brief_requested_outcome: review.brief.requestedOutcome,
+      brief_updated_at: review.brief.updatedAt,
+    } : {}),
+    status: getReviewStatus(review),
+    reviewer_name_required: review.shareSettings.reviewerNameRequired,
+    pin_protection_enabled: review.shareSettings.pinProtection,
+    allow_comments: review.shareSettings.allowComments,
+    allow_decisions: review.shareSettings.allowDecisions,
+    content: { ...review, shareToken: undefined },
+    updated_at: new Date().toISOString(),
+    ...extra,
+  };
 }
 
 interface AssetRow {
@@ -158,6 +193,12 @@ export function createEmptyReviewData(reviewId: string): ReviewData {
     title: 'Untitled review',
     client: '',
     instructions: '',
+    brief: {
+      message: '',
+      focusPoints: [],
+      requestedOutcome: '',
+      updatedAt: null,
+    },
     shareSettings: {
       reviewerNameRequired: true,
       pinProtection: false,
@@ -537,6 +578,12 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
     title: row.title ?? row.content?.title,
     client: row.client_name ?? row.content?.client,
     instructions: row.instructions ?? row.content?.instructions,
+    brief: {
+      message: row.brief_message ?? row.content?.brief?.message ?? '',
+      focusPoints: row.brief_focus_points ?? row.content?.brief?.focusPoints ?? [],
+      requestedOutcome: row.brief_requested_outcome ?? row.content?.brief?.requestedOutcome ?? '',
+      updatedAt: row.brief_updated_at ?? row.content?.brief?.updatedAt ?? null,
+    },
     shareSettings: {
       reviewerNameRequired: row.reviewer_name_required ?? row.content?.shareSettings?.reviewerNameRequired ?? true,
       pinProtection: row.pin_protection_enabled ?? row.content?.shareSettings?.pinProtection ?? false,
@@ -674,16 +721,30 @@ export async function loadReviewById(reviewId: string): Promise<ReviewData> {
     return createEmptyReviewData(reviewId);
   }
 
-  const { data, error } = await client
+  const reviewResult = await client
     .from(REVIEW_TABLE)
-    .select('id, share_token, title, client_name, instructions, reviewer_name_required, pin_protection_enabled, allow_comments, allow_decisions, content')
+    .select(REVIEW_SELECT_WITH_BRIEF)
     .eq('id', reviewId)
     .eq('owner_id', userData.user.id)
     .maybeSingle();
+  let data = reviewResult.data as ReviewRow | null;
+  let error = reviewResult.error;
+
+  if (error && isMissingBriefColumnError(error)) {
+    const legacyResult = await client
+      .from(REVIEW_TABLE)
+      .select(REVIEW_SELECT_LEGACY)
+      .eq('id', reviewId)
+      .eq('owner_id', userData.user.id)
+      .maybeSingle();
+
+    data = legacyResult.data as ReviewRow | null;
+    error = legacyResult.error;
+  }
 
   if (error) {
     console.error('Failed to load review from Supabase:', error.message);
-    return { ...initialReview, id: reviewId, shareToken: 'mock-share-token' };
+    return createEmptyReviewData(reviewId);
   }
 
   if (data) {
@@ -691,20 +752,12 @@ export async function loadReviewById(reviewId: string): Promise<ReviewData> {
   }
 
   const emptyReview = createEmptyReviewData(reviewId);
-  const { error: insertError } = await client.from(REVIEW_TABLE).upsert({
-    id: reviewId,
-    owner_id: userData.user.id,
-    title: emptyReview.title,
-    client_name: emptyReview.client,
-    instructions: emptyReview.instructions,
-    status: 'in_review',
-    reviewer_name_required: emptyReview.shareSettings.reviewerNameRequired,
-    pin_protection_enabled: emptyReview.shareSettings.pinProtection,
-    allow_comments: emptyReview.shareSettings.allowComments,
-    allow_decisions: emptyReview.shareSettings.allowDecisions,
-    content: emptyReview,
-    updated_at: new Date().toISOString(),
-  });
+  let { error: insertError } = await client.from(REVIEW_TABLE).upsert(reviewUpsertPayload(emptyReview, userData.user.id, true, { status: 'in_review' }));
+
+  if (insertError && isMissingBriefColumnError(insertError)) {
+    const legacyInsert = await client.from(REVIEW_TABLE).upsert(reviewUpsertPayload(emptyReview, userData.user.id, false, { status: 'in_review' }));
+    insertError = legacyInsert.error;
+  }
 
   if (insertError) {
     console.error('Failed to seed review in Supabase:', insertError.message);
@@ -886,21 +939,22 @@ export async function createReview(): Promise<ReviewData> {
   const review = createEmptyReviewData(reviewId);
   const now = new Date().toISOString();
 
-  const { data, error } = await client.from(REVIEW_TABLE).insert({
-    id: review.id,
-    owner_id: userData.user.id,
-    title: review.title,
-    client_name: review.client,
-    instructions: review.instructions,
+  let { data, error } = await client.from(REVIEW_TABLE).insert(reviewUpsertPayload(review, userData.user.id, true, {
     status: 'in_review',
-    reviewer_name_required: review.shareSettings.reviewerNameRequired,
-    pin_protection_enabled: review.shareSettings.pinProtection,
-    allow_comments: review.shareSettings.allowComments,
-    allow_decisions: review.shareSettings.allowDecisions,
-    content: review,
     creator_seen_at: now,
     updated_at: now,
-  }).select('share_token').single();
+  })).select('share_token').single();
+
+  if (error && isMissingBriefColumnError(error)) {
+    const legacyInsert = await client.from(REVIEW_TABLE).insert(reviewUpsertPayload(review, userData.user.id, false, {
+      status: 'in_review',
+      creator_seen_at: now,
+      updated_at: now,
+    })).select('share_token').single();
+
+    data = legacyInsert.data;
+    error = legacyInsert.error;
+  }
 
   if (error) {
     throw new Error(`Failed to create review: ${error.message}`);
@@ -984,20 +1038,12 @@ export async function saveReview(review: ReviewData): Promise<void> {
     throw new Error('Sign in to save reviews and upload previews.');
   }
 
-  const { error } = await client.from(REVIEW_TABLE).upsert({
-    id: review.id,
-    owner_id: userData.user.id,
-    title: review.title,
-    client_name: review.client,
-    instructions: review.instructions,
-    status: getReviewStatus(review),
-    reviewer_name_required: review.shareSettings.reviewerNameRequired,
-    pin_protection_enabled: review.shareSettings.pinProtection,
-    allow_comments: review.shareSettings.allowComments,
-    allow_decisions: review.shareSettings.allowDecisions,
-    content: { ...review, shareToken: undefined },
-    updated_at: new Date().toISOString(),
-  });
+  let { error } = await client.from(REVIEW_TABLE).upsert(reviewUpsertPayload(review, userData.user.id, true));
+
+  if (error && isMissingBriefColumnError(error)) {
+    const legacySave = await client.from(REVIEW_TABLE).upsert(reviewUpsertPayload(review, userData.user.id, false));
+    error = legacySave.error;
+  }
 
   if (error) {
     console.error('Failed to save review to Supabase:', error.message);

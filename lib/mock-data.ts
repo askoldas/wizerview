@@ -77,12 +77,20 @@ export interface ShareSettings {
   allowDecisions: boolean;
 }
 
+export interface ReviewBrief {
+  message: string;
+  focusPoints: string[];
+  requestedOutcome: string;
+  updatedAt?: string | null;
+}
+
 export interface ReviewData {
   id: string;
   shareToken?: string;
   title: string;
   client: string;
   instructions: string;
+  brief: ReviewBrief;
   shareSettings: ShareSettings;
   assets: ReviewAsset[];
   overallFeedback: string;
@@ -252,6 +260,12 @@ export function normalizeReviewData(review: ReviewData | LegacyReviewData): Revi
     title: normalized.title ?? 'Untitled review',
     client: normalized.client ?? '',
     instructions: normalized.instructions ?? '',
+    brief: {
+      message: normalized.brief?.message ?? '',
+      focusPoints: Array.isArray(normalized.brief?.focusPoints) ? normalized.brief.focusPoints : [],
+      requestedOutcome: normalized.brief?.requestedOutcome ?? '',
+      updatedAt: normalized.brief?.updatedAt ?? null,
+    },
     shareSettings: normalized.shareSettings ?? {
       reviewerNameRequired: true,
       pinProtection: false,
@@ -286,6 +300,12 @@ export const initialReview: ReviewData = normalizeReviewData({
   title: 'Homepage Direction',
   client: 'Acme Studio',
   instructions: 'Please compare the homepage versions, leave notes, and select the strongest direction.',
+  brief: {
+    message: '',
+    focusPoints: [],
+    requestedOutcome: '',
+    updatedAt: null,
+  },
   shareSettings: {
     reviewerNameRequired: true,
     pinProtection: false,

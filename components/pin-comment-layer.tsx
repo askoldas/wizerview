@@ -64,20 +64,23 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
 
       {comments
         .filter((comment) => commentMatchesVersion(comment, asset, version) && !comment.parentCommentId && comment.x != null && comment.y != null)
-        .map((comment, index) => (
-          <button
-            key={comment.id}
-            data-pin-id={comment.id}
-            className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white text-sm font-semibold text-white shadow-lg ${activeCommentId === comment.id ? 'bg-stone-950 ring-2 ring-amber-300' : 'bg-amber-600'}`}
-            style={{ left: `${comment.x ?? 0}%`, top: `${comment.y ?? 0}%` }}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelectComment(comment.id);
-            }}
-          >
-            {index + 1}
-          </button>
-        ))}
+        .map((comment, index) => {
+          const isCreatorNote = comment.authorRole === 'creator';
+          return (
+            <button
+              key={comment.id}
+              data-pin-id={comment.id}
+              className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-sm font-semibold shadow-lg ${activeCommentId === comment.id ? 'bg-stone-950 text-white ring-2 ring-amber-300' : isCreatorNote ? 'border-stone-950 bg-white text-stone-950' : 'border-white bg-amber-600 text-white'}`}
+              style={{ left: `${comment.x ?? 0}%`, top: `${comment.y ?? 0}%` }}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectComment(comment.id);
+              }}
+            >
+              {index + 1}
+            </button>
+          );
+        })}
 
       {activePin ? (
         <div
