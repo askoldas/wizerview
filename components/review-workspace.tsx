@@ -139,6 +139,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     author: string;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement | null>(null);
+  const commentCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const savedReviewSignatureRef = useRef(getReviewSaveSignature(fallbackReview));
   const objectUrlsRef = useRef<Set<string>>(new Set());
 
@@ -207,6 +209,18 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       objectUrlsRef.current = new Set();
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeCommentId) return;
+
+    window.requestAnimationFrame(() => {
+      const previewScroller = previewScrollRef.current;
+      const pin = previewScroller?.querySelector<HTMLElement>(`[data-pin-id="${activeCommentId}"]`);
+      pin?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+
+      commentCardRefs.current[activeCommentId]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    });
+  }, [activeAssetId, activeCommentId, activeVersionId, rightTab]);
 
   const activeAsset = review.assets.find((asset) => asset.id === activeAssetId) ?? review.assets[0];
   const activeVersion = activeAsset?.versions.find((version) => version.id === activeVersionId) ?? activeAsset?.versions[0];
@@ -872,7 +886,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const activeVersionHasPreview = Boolean(activeVersion?.previewUrl && activeVersion.status === 'ready');
 
   return (
-    <main className="flex min-h-screen flex-col bg-canvas text-text">
+    <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-canvas text-text">
       {showIdentityModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/70 px-4">
           <div className="w-full max-w-md rounded-lg border border-border bg-surface p-6 shadow-xl">
@@ -901,7 +915,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         </div>
       ) : null}
 
-      <header className="sticky top-0 z-30 border-b border-border bg-surface/95 px-4 py-3 backdrop-blur lg:px-6">
+      <header className="z-30 flex-none border-b border-border bg-surface/95 px-4 py-3 backdrop-blur lg:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
             {isCreator ? <BrandLogo href="/dashboard" /> : null}
@@ -931,10 +945,10 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         </div>
       </header>
 
-      <div className="grid flex-1 lg:grid-cols-[156px_minmax(0,1fr)_360px]">
-        <aside className="border-b border-border bg-surface-muted/80 p-3 lg:border-b-0 lg:border-r">
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[156px_minmax(0,1fr)_360px]">
+        <aside className="flex min-h-0 flex-col border-b border-border bg-surface-muted/80 p-3 lg:border-b-0 lg:border-r">
           <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-text-subtle">Assets</p>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-1">
+          <div className="mt-3 grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-1">
             {review.assets.length ? review.assets.map(renderAssetRailButton) : (
               <div className="rounded-md border border-dashed border-border-strong bg-surface p-3 text-xs leading-5 text-text-subtle">No assets in this review yet.</div>
             )}
@@ -947,7 +961,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           {uploadMessage ? <p className="mt-3 text-xs leading-5 text-text-subtle">{uploadMessage}</p> : null}
         </aside>
 
-        <section className="min-w-0 px-4 py-4 lg:px-6">
+        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-4 lg:px-6">
           <input
             ref={fileInputRef}
             type="file"
@@ -956,7 +970,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             onChange={handleAssetUpload}
             disabled={isSupabaseConfigured() && !authUser}
           />
-          <div className="flex flex-col gap-3 border-b border-stone-200 pb-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex flex-none flex-col gap-3 border-b border-stone-200 pb-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
               {(activeAsset?.versions ?? []).map((version, index) => (
                 <button
@@ -983,7 +997,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             <p className="text-sm text-stone-500">{isCreator || review.shareSettings.allowComments ? 'Click the preview to add a pinned note.' : 'Pinned notes are disabled for this review.'}</p>
           </div>
 
-          <div className="mt-5">
+          <div className="mt-5 flex min-h-0 flex-1 flex-col">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-stone-950">{activeVersion?.label ?? versionLabel(activeVersionIndex)}</p>
@@ -1009,7 +1023,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               ) : null}
             </div>
 
-            <div className="relative min-h-[470px] overflow-hidden rounded-[14px] border border-stone-200 bg-white/75 p-3 shadow-sm">
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-[14px] border border-stone-200 bg-white/75 p-3 shadow-sm">
               {activeAsset ? (
                 <>
                   {isCreator && activeVersion && !activeVersionHasPreview ? (
@@ -1025,7 +1039,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') fileInputRef.current?.click();
                       }}
-                      className={`flex min-h-[440px] flex-col items-center justify-center rounded-[12px] border border-dashed p-6 text-center transition ${isDropTargetActive ? 'border-stone-950 bg-stone-200' : 'border-stone-300 bg-stone-100'}`}
+                      className={`flex h-full min-h-[360px] flex-col items-center justify-center rounded-[12px] border border-dashed p-6 text-center transition ${isDropTargetActive ? 'border-stone-950 bg-stone-200' : 'border-stone-300 bg-stone-100'}`}
                     >
                       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-stone-800 shadow-sm ring-1 ring-stone-200">
                         <FiUploadCloud aria-hidden="true" className="h-7 w-7" />
@@ -1056,6 +1070,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                     <AssetSurface
                       asset={activeAsset}
                       version={activeVersion}
+                      scrollContainerRef={previewScrollRef}
                       overlay={activeVersionHasPreview && showPins && (isCreator || review.shareSettings.allowComments) ? (
                         <PinCommentLayer
                           asset={activeAsset}
@@ -1063,7 +1078,11 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                           comments={review.comments}
                           onAddComment={handleAddComment}
                           activeCommentId={activeCommentId}
-                          onSelectComment={setActiveCommentId}
+                          onSelectComment={(commentId) => {
+                            setActiveCommentId(commentId);
+                            setCommentFilter('all');
+                            setRightTab('notes');
+                          }}
                         />
                       ) : null}
                     />
@@ -1088,7 +1107,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           </div>
         </section>
 
-        <aside className="border-t border-stone-200 bg-white p-4 lg:border-l lg:border-t-0">
+        <aside className="flex min-h-0 flex-col overflow-hidden border-t border-stone-200 bg-white p-4 lg:border-l lg:border-t-0">
           <div className="flex rounded-[10px] bg-stone-100 p-1">
             {[
               { key: 'notes' as const, label: 'Pinned notes' },
@@ -1101,8 +1120,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           </div>
 
           {rightTab === 'notes' ? (
-            <div className="mt-4 space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+              <div className="sticky top-0 z-10 -mx-1 bg-white px-1 pb-2">
+                <div className="flex flex-wrap items-center gap-2">
                 {[
                   { key: 'all' as const, label: `All ${assetComments.length}` },
                   { key: 'open' as const, label: `Open ${assetComments.filter((comment) => (comment.status ?? 'open') === 'open').length}` },
@@ -1117,16 +1137,19 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                     {filter.label}
                   </button>
                 ))}
+                </div>
+                <p className="mt-2 text-xs text-stone-500">{openCommentCount} open comments / {resolvedCommentCount} resolved across this review</p>
               </div>
-
-              <p className="text-xs text-stone-500">{openCommentCount} open comments / {resolvedCommentCount} resolved across this review</p>
 
               {filteredAssetComments.length > 0 ? filteredAssetComments.map((comment, index) => (
                 <article
                   key={comment.id}
+                  ref={(node) => {
+                    commentCardRefs.current[comment.id] = node;
+                  }}
                   className={`rounded-[10px] border px-3 py-2.5 text-sm ${activeCommentId === comment.id ? 'border-stone-950 bg-stone-950 text-white' : comment.status === 'resolved' ? 'border-stone-200 bg-stone-50 text-stone-500' : 'border-stone-200 bg-white text-stone-700'}`}
                 >
-                  <button type="button" onClick={() => setActiveCommentId(comment.id)} className="block w-full text-left">
+                  <button type="button" onClick={() => focusComment(comment)} className="block w-full text-left">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-medium">{comment.author}</span>
                       <span className="text-xs uppercase tracking-[0.18em]">Pin {index + 1}</span>
@@ -1212,7 +1235,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               ) : null}
             </div>
           ) : (
-            <div className="mt-4">
+            <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
               <FeedbackPanel value={review.overallFeedback} onChange={handleFeedbackChange} label="Overall feedback" />
               {!isCreator && review.shareSettings.allowComments ? (
                 <button type="button" onClick={handleSaveFeedback} className="mt-3 rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save feedback</button>
@@ -1221,7 +1244,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             </div>
           )}
 
-          <div className="mt-5 border-t border-stone-200 pt-5">
+          <div className="mt-4 flex-none border-t border-stone-200 pt-4">
             <p className="text-sm font-semibold text-stone-950">Final decision</p>
             {!isCreator && review.shareSettings.allowDecisions ? (
               <div className="mt-3 flex flex-wrap gap-2">
@@ -1243,7 +1266,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           </div>
 
           {isCreator ? (
-            <div className="mt-5 border-t border-stone-200 pt-5">
+            <div className="mt-4 max-h-[34vh] flex-none overflow-y-auto border-t border-stone-200 pt-4 pr-1">
               <p className="text-sm font-semibold text-stone-950">Review settings</p>
               <div className="mt-3 space-y-2">
                 {[
@@ -1275,7 +1298,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         </aside>
       </div>
 
-      <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white px-4 py-3 text-sm text-stone-600 lg:px-6">
+      <footer className="flex flex-none flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white px-4 py-3 text-sm text-stone-600 lg:px-6">
         <div className="flex flex-wrap items-center gap-3">
           <span>{totalComments} comments</span>
           <button type="button" onClick={() => setShowPins((current) => !current)} className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">{showPins ? 'Hide pins' : 'Show pins'}</button>

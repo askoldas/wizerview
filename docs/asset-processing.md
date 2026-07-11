@@ -6,6 +6,7 @@ WizerView is not file storage. WizerView stores lightweight review previews.
 
 Original uploaded files are temporary processing inputs. They should be deleted after preview generation unless a future paid feature explicitly stores originals.
 
+
 ## Asset Ingestion Flow
 
 ### Images
