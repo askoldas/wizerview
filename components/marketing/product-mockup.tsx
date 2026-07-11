@@ -3,7 +3,7 @@ export function ProductMockup() {
     <div className="rounded-lg border border-border bg-surface p-3 shadow-md">
       <div className="grid min-h-[420px] gap-3 lg:grid-cols-[150px_minmax(0,1fr)_260px]">
         <aside className="rounded-md bg-surface-muted p-3">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-text-subtle">Assets</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-text-subtle">Deliverables</p>
           {['Homepage v2', 'Mobile view', 'PDF page'].map((item, index) => (
             <div key={item} className={`mt-3 rounded-md border p-2 ${index === 0 ? 'border-brand bg-brand-soft' : 'border-border bg-surface'}`}>
               <div className="h-16 rounded-sm bg-gradient-to-br from-brand to-brand-strong" />

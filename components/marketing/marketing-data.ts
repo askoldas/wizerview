@@ -14,7 +14,7 @@ export const customerLinks = [
 export const toolCards = [
   { href: '/design-feedback-tool', title: 'Design work', text: 'Mockups, UI screens, banners, brand concepts and other creative previews.' },
   { href: '/website-feedback-tool', title: 'Website screenshots', text: 'Screenshot-based review for website designs, landing page mockups and page previews.' },
-  { href: '/image-review-tool', title: 'Images', text: 'Visual assets, screenshots, campaign graphics and exported design files.' },
+  { href: '/image-review-tool', title: 'Images', text: 'Visual deliverables, screenshots, campaign graphics and exported design files.' },
   { href: '/pdf-proofing-tool', title: 'PDFs', text: 'Brochures, proposals, reports, decks and page-based proofing work.' },
 ];
 

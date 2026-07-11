@@ -14,7 +14,7 @@ export default function PdfProofingToolPage() {
       <HeroSection eyebrow="PDF proofing tool" title="Review PDFs and get client approval in one place." text="Upload proposals, brochures, decks and documents, then collect page-specific feedback in one review space." primary="Upload PDF for review" />
       <TextBand title="PDF feedback gets lost between email comments and marked-up attachments." text="Keep page-specific comments, versions and approval status together in one clean review link." />
       <CardGrid title="How it works" cards={[
-        { title: 'Upload PDF', text: 'Add the document or proofing asset.' },
+        { title: 'Upload PDF', text: 'Add the document or proofing deliverable.' },
         { title: 'Review pages visually', text: 'Clients comment on the right page and location.' },
         { title: 'Get final approval', text: 'Resolve feedback and track the decision.' },
       ]} />

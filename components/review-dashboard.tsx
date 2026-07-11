@@ -187,7 +187,7 @@ export function ReviewDashboard() {
       return;
     }
 
-    const confirmed = window.confirm(`Delete "${review.title}"? This removes the review, assets, versions, comments, feedback, and decisions.`);
+    const confirmed = window.confirm(`Delete "${review.title}"? This removes the review, deliverables, versions, comments, feedback, and decisions.`);
     if (!confirmed) return;
 
     setDeletingReviewId(review.id);

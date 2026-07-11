@@ -13,7 +13,7 @@ export default function FeaturesPage() {
     <main>
       <HeroSection title="All the tools you need for clear client feedback." text="Visual comments, versions, secure review links and approval status in one focused workspace." primary="Start your first review" />
       <CardGrid title="Feature set" cards={[
-        { title: 'Visual comments', text: 'Click directly on the asset and leave feedback in context.' },
+        { title: 'Visual comments', text: 'Click directly on the deliverable and leave feedback in context.' },
         { title: 'Guest reviewers', text: 'Clients can review without creating an account.' },
         { title: 'Asset versions', text: 'Keep new versions connected to the same review.' },
         { title: 'Approval workflow', text: 'Clients can approve or request changes.' },

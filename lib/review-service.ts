@@ -209,7 +209,7 @@ export function createEmptyReviewData(reviewId: string): ReviewData {
       {
         id: assetId,
         reviewId,
-        title: 'Primary asset',
+        title: 'Primary deliverable',
         description: 'A reviewable asset for client feedback.',
         assetType: 'screenshot',
         sortOrder: 0,
