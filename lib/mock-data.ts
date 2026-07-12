@@ -84,6 +84,14 @@ export interface ReviewBrief {
   updatedAt?: string | null;
 }
 
+export interface DecisionOutcome {
+  type: 'approved' | 'changes_requested' | 'direction_selected' | 'combine_options';
+  note: string;
+  assetVersionId?: string | null;
+  reviewerName?: string | null;
+  createdAt?: string | null;
+}
+
 export interface ReviewData {
   id: string;
   shareToken?: string;
@@ -95,6 +103,7 @@ export interface ReviewData {
   assets: ReviewAsset[];
   overallFeedback: string;
   decision: string;
+  decisionOutcome?: DecisionOutcome | null;
   selectedDirection: string | null;
   selectedAssetVersionId?: string | null;
   comments: Comment[];
@@ -290,6 +299,7 @@ export function normalizeReviewData(review: ReviewData | LegacyReviewData): Revi
     })),
     overallFeedback: normalized.overallFeedback ?? '',
     decision: normalized.decision ?? '',
+    decisionOutcome: normalized.decisionOutcome ?? null,
     selectedDirection: normalized.selectedDirection ?? null,
     selectedAssetVersionId: normalized.selectedAssetVersionId ?? normalized.selectedDirection ?? null,
   };

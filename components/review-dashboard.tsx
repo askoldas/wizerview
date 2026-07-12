@@ -6,7 +6,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { AuthModal } from '@/components/auth/auth-modal';
 import { BrandLogo } from '@/components/brand-logo';
-import { createReview, deleteReview, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
+import { deleteReview, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
 import { createSupabaseClientInstance } from '@/lib/supabase';
 
 function getInitials(email?: string | null) {
@@ -127,17 +127,7 @@ export function ReviewDashboard() {
       return;
     }
 
-    setIsCreating(true);
-    setMessage(null);
-
-    try {
-      const review = await createReview();
-      router.push(`/reviews/${review.id}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Could not create review.');
-    } finally {
-      setIsCreating(false);
-    }
+    router.push('/reviews/new');
   };
 
   const handleOpenReview = async (reviewId: string) => {

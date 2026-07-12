@@ -11,7 +11,7 @@ import { BrandLogo } from '@/components/brand-logo';
 import { FeedbackPanel } from '@/components/feedback-panel';
 import { PinCommentLayer } from '@/components/pin-comment-layer';
 import { estimateStorageSavings, processImagePreview, processPdfPreview } from '@/lib/asset-processing';
-import type { AssetVersion, Comment, ReviewAsset, ReviewData, ShareSettings } from '@/lib/mock-data';
+import type { AssetVersion, Comment, DecisionOutcome, ReviewAsset, ReviewData, ShareSettings } from '@/lib/mock-data';
 import {
   createEmptyReviewData,
   deleteAsset,
@@ -28,7 +28,6 @@ import {
   saveCommentReply,
   saveReview,
   saveReviewerDecision,
-  saveReviewerFeedback,
   type ReviewerDecisionType,
 } from '@/lib/review-service';
 import { createSupabaseClientInstance, isSupabaseConfigured } from '@/lib/supabase';
@@ -131,6 +130,10 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const [isElsewhereOpen, setIsElsewhereOpen] = useState(true);
   const [isBriefExpanded, setIsBriefExpanded] = useState(isCreator);
   const [isEditingBrief, setIsEditingBrief] = useState(false);
+  const [isEditingDeliverableBrief, setIsEditingDeliverableBrief] = useState(false);
+  const [deliverableBriefDraft, setDeliverableBriefDraft] = useState('');
+  const [isEditingVersionDescription, setIsEditingVersionDescription] = useState(false);
+  const [versionDescriptionDraft, setVersionDescriptionDraft] = useState('');
   const [briefDraft, setBriefDraft] = useState(fallbackReview.brief);
   const [isDropTargetActive, setIsDropTargetActive] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
@@ -141,6 +144,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const [isCheckingAuth, setIsCheckingAuth] = useState(isCreator && Boolean(supabase));
   const [hasMarkedSeen, setHasMarkedSeen] = useState(false);
   const [reviewerName, setReviewerName] = useState('');
+  const [decisionNote, setDecisionNote] = useState('');
   const [showIdentityModal, setShowIdentityModal] = useState(false);
   const [pendingComment, setPendingComment] = useState<{
     assetId: string;
@@ -155,7 +159,6 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const centerScrollRef = useRef<HTMLDivElement | null>(null);
   const feedbackDrawerRef = useRef<HTMLDivElement | null>(null);
   const discussionSectionRef = useRef<HTMLElement | null>(null);
-  const summarySectionRef = useRef<HTMLElement | null>(null);
   const decisionSectionRef = useRef<HTMLElement | null>(null);
   const settingsSectionRef = useRef<HTMLElement | null>(null);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
@@ -205,6 +208,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       setActiveVersionId(firstVersion?.id ?? '');
       setActiveCommentId(null);
       setBriefDraft(loaded.brief);
+      setDecisionNote(loaded.decisionOutcome?.note ?? '');
       setIsReviewLoaded(true);
     });
 
@@ -921,16 +925,6 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     }
   };
 
-  const handleFeedbackChange = (value: string) => {
-    if (!isCreator && !review.shareSettings.allowComments) {
-      setSaveMessage('Feedback is disabled for this review.');
-      return;
-    }
-
-    if (!requireName()) return;
-    setReview((current) => ({ ...current, overallFeedback: value }));
-  };
-
   const handleSaveBrief = () => {
     if (!isCreator) return;
     const nextBrief = {
@@ -946,29 +940,11 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     setSaveMessage('Review brief updated.');
   };
 
-  const handleSaveFeedback = async () => {
-    if (!review.shareSettings.allowComments) {
-      setSaveMessage('Feedback is disabled for this review.');
-      return;
-    }
+  // Kept only for a non-rendered legacy branch while old persisted feedback remains readable.
+  const handleFeedbackChange = () => {};
+  const handleSaveFeedback = async () => {};
 
-    if (!requireName()) return;
-    if (!review.overallFeedback.trim()) return;
-
-    try {
-      await saveReviewerFeedback({
-        reviewId: review.id,
-        shareToken: review.shareToken,
-        reviewerName: reviewerName || 'Reviewer',
-        body: review.overallFeedback.trim(),
-      });
-      setSaveMessage('Feedback saved.');
-    } catch (error) {
-      setSaveMessage(error instanceof Error ? error.message : 'Could not save feedback.');
-    }
-  };
-
-  const persistDecision = async (type: ReviewerDecisionType, note: string, assetVersionId?: string | null) => {
+  const persistDecision = async (type: ReviewerDecisionType, assetVersionId?: string | null) => {
     if (!review.shareSettings.allowDecisions) {
       setSaveMessage('Decisions are disabled for this review.');
       return;
@@ -981,9 +957,11 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         assetVersionId: assetVersionId ?? null,
         reviewerName: reviewerName || 'Reviewer',
         type,
-        note,
+        note: decisionNote.trim(),
       });
-      setSaveMessage('Decision saved.');
+      const outcome: DecisionOutcome = { type, note: decisionNote.trim(), assetVersionId: assetVersionId ?? null, reviewerName: reviewerName || 'Reviewer', createdAt: new Date().toISOString() };
+      setReview((current) => ({ ...current, decision: outcome.note, decisionOutcome: outcome, selectedDirection: assetVersionId ?? current.selectedDirection, selectedAssetVersionId: assetVersionId ?? current.selectedAssetVersionId }));
+      setSaveMessage('Decision submitted.');
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : 'Could not save decision.');
     }
@@ -991,28 +969,47 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
 
   const handleSelectVersion = () => {
     if (!requireName() || !activeVersion) return;
-    const note = `Selected version: ${activeVersion.label}`;
-    setReview((current) => ({ ...current, selectedDirection: activeVersion.id, selectedAssetVersionId: activeVersion.id, decision: note }));
-    void persistDecision('direction_selected', note, activeVersion.id);
+    void persistDecision('direction_selected', activeVersion.id);
   };
 
-  const handleDecisionChange = (decision: string, type: ReviewerDecisionType) => {
+  const handleDecisionChange = (type: ReviewerDecisionType | string, legacyType?: ReviewerDecisionType) => {
     if (!requireName()) return;
-    setReview((current) => ({ ...current, decision }));
-    void persistDecision(type, decision, null);
+    const decisionType = legacyType ?? type as ReviewerDecisionType;
+    void persistDecision(decisionType, activeVersion?.id ?? null);
   };
 
-  const openDrawerSection = (section: 'discussion' | 'summary' | 'decision' | 'settings') => {
+  const openDrawerSection = (section: 'discussion' | 'decision' | 'settings') => {
     setIsFeedbackDrawerOpen(true);
     setIsAssetPickerOpen(false);
     setRightTab(section === 'discussion' ? 'notes' : 'feedback');
     const target = {
       discussion: discussionSectionRef,
-      summary: summarySectionRef,
       decision: decisionSectionRef,
       settings: settingsSectionRef,
     }[section];
     window.requestAnimationFrame(() => target.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+
+  const saveDeliverableBrief = () => {
+    if (!activeAsset) return;
+    setReview((current) => ({ ...current, assets: current.assets.map((asset) => asset.id === activeAsset.id ? { ...asset, description: deliverableBriefDraft.trim() } : asset) }));
+    setIsEditingDeliverableBrief(false);
+  };
+
+  const saveVersionDescription = () => {
+    if (!activeAsset || !activeVersion) return;
+    setReview((current) => ({ ...current, assets: current.assets.map((asset) => asset.id === activeAsset.id ? { ...asset, versions: asset.versions.map((version) => version.id === activeVersion.id ? { ...version, metadata: { ...version.metadata, description: versionDescriptionDraft.trim() } } : version) } : asset) }));
+    setIsEditingVersionDescription(false);
+  };
+
+  const renderDeliverableBrief = () => {
+    const brief = activeAsset?.description?.trim() ?? '';
+    const legacyBrief = review.brief.message.trim();
+    if (!isCreator && !brief && !legacyBrief) return null;
+    if (!brief && legacyBrief) return <section className="rounded-[12px] border border-stone-200 bg-white p-4"><p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Review brief</p><p className="mt-2 text-sm leading-6 text-stone-700">{legacyBrief}</p></section>;
+    if (isCreator && !brief && !isEditingDeliverableBrief) return <button type="button" onClick={() => { setDeliverableBriefDraft(''); setIsEditingDeliverableBrief(true); }} className="inline-flex w-fit rounded-[8px] border border-dashed border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Add brief</button>;
+    if (isCreator && isEditingDeliverableBrief) return <section className="rounded-[12px] border border-stone-200 bg-white p-4"><p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Deliverable brief</p><textarea value={deliverableBriefDraft} onChange={(event) => setDeliverableBriefDraft(event.target.value)} placeholder="Explain what to review and what to focus on." className="mt-3 min-h-24 w-full rounded-[8px] border border-stone-200 px-3 py-2 text-sm" /><div className="mt-3 flex gap-2"><button type="button" onClick={() => setIsEditingDeliverableBrief(false)} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-700">Cancel</button><button type="button" onClick={saveDeliverableBrief} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save brief</button></div></section>;
+    return <section className="rounded-[12px] border border-stone-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Deliverable brief</p><p className="mt-2 text-sm leading-6 text-stone-800">{brief}</p></div>{isCreator ? <button type="button" onClick={() => { setDeliverableBriefDraft(brief); setIsEditingDeliverableBrief(true); }} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700">Edit</button> : null}</div></section>;
   };
 
   const renderAssetRailButton = (asset: ReviewAsset) => {
@@ -1022,7 +1019,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     return (
     <article
       key={asset.id}
-      className={`group relative w-full rounded-md border bg-surface p-2 text-left transition ${isActive ? 'border-brand shadow-sm' : 'border-transparent hover:border-border'}`}
+      className={`group relative w-full self-start rounded-md border bg-surface p-2 text-left transition ${isActive ? 'border-brand shadow-sm' : 'border-transparent hover:border-border'}`}
     >
       <button
         type="button"
@@ -1310,72 +1307,26 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   );
 
   const renderOutcomePanel = () => {
-    const discussedAssetCount = review.assets.filter((asset) =>
-      topLevelComments.some((comment) => comment.assetId === asset.id)
-    ).length;
-    const clientDiscussionCount = topLevelComments.filter((comment) => comment.authorRole !== 'creator').length;
-    const creatorDiscussionCount = topLevelComments.filter((comment) => comment.authorRole === 'creator').length;
-    const hasFinishSignal = Boolean(review.decision || review.selectedAssetVersionId || review.overallFeedback.trim());
-
+    const outcome = review.decisionOutcome;
+    const outcomeLabel = outcome?.type === 'changes_requested' ? 'Changes requested' : outcome?.type === 'direction_selected' ? 'Version selected' : outcome?.type === 'combine_options' ? 'Merge ideas requested' : 'Approved';
+    const noteLabel = hasMultipleVersions ? 'Why did you choose this version?' : 'Anything else the creator should know?';
     return (
-      <>
-        <section ref={summarySectionRef} className="scroll-mt-4 rounded-[12px] border border-stone-200 bg-white p-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Overall review summary</p>
-          <p className="mt-1 text-sm text-stone-600">Capture the direction of the review after the pinned discussion.</p>
-          <div className="mt-3">
-            <FeedbackPanel value={review.overallFeedback} onChange={handleFeedbackChange} label="Review summary" />
+      <section ref={decisionSectionRef} className="scroll-mt-4 rounded-[12px] border border-stone-200 bg-white p-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Deliverable decision</p>
+        <div className="mt-3 rounded-[10px] bg-stone-50 px-3 py-2 text-sm text-stone-700"><span className="font-semibold text-stone-950">Deliverable:</span> {activeAsset?.title ?? 'No deliverable'}</div>
+        {selectedVersionLabel ? <p className="mt-2 rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Selected version: {selectedVersionLabel}</p> : null}
+        {!isCreator && review.shareSettings.allowDecisions ? <>
+          <label className="mt-4 block text-sm font-semibold text-stone-900">{noteLabel}<textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} placeholder={hasMultipleVersions ? 'Optional decision note' : 'Optional decision note'} className="mt-2 min-h-24 w-full rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-normal" /></label>
+          <p className="mt-1 text-xs text-stone-500">Optional</p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+            <button type="button" onClick={() => handleDecisionChange('changes_requested')} className="rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">Request changes</button>
+            {hasMultipleVersions ? <button type="button" onClick={handleSelectVersion} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Select {activeVersion?.label ?? 'version'}</button> : <button type="button" onClick={() => handleDecisionChange('approved')} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Approve</button>}
           </div>
-          {!isCreator && review.shareSettings.allowComments ? <button type="button" onClick={handleSaveFeedback} className="mt-3 rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save summary</button> : null}
-        </section>
-
-        <section className="mt-4 rounded-[12px] border border-stone-200 bg-white p-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Review progress</p>
-          <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            <div className="rounded-[10px] bg-stone-50 px-3 py-2">
-              <span className="block text-xs text-stone-500">Deliverables discussed</span>
-              <span className="font-semibold text-stone-950">{discussedAssetCount} / {review.assets.length}</span>
-            </div>
-            <div className="rounded-[10px] bg-stone-50 px-3 py-2">
-              <span className="block text-xs text-stone-500">Open threads</span>
-              <span className="font-semibold text-stone-950">{openCommentCount}</span>
-            </div>
-            <div className="rounded-[10px] bg-stone-50 px-3 py-2">
-              <span className="block text-xs text-stone-500">Client / creator</span>
-              <span className="font-semibold text-stone-950">{clientDiscussionCount} / {creatorDiscussionCount}</span>
-            </div>
-            <div className="rounded-[10px] bg-stone-50 px-3 py-2">
-              <span className="block text-xs text-stone-500">Resolved</span>
-              <span className="font-semibold text-stone-950">{resolvedCommentCount}</span>
-            </div>
-          </div>
-        </section>
-
-        <section ref={decisionSectionRef} className="mt-4 scroll-mt-4 rounded-[12px] border border-stone-200 bg-white p-3">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Final decision</p>
-          <p className="mt-1 text-sm text-stone-600">{hasFinishSignal ? 'A review outcome has been started.' : 'Add final feedback and submit the review outcome.'}</p>
-          <div className="mt-3">
-            <div className="rounded-[10px] bg-stone-50 px-3 py-2 text-sm text-stone-700"><span className="font-semibold text-stone-950">Active:</span> {activeAsset?.title ?? 'No deliverable'} / {activeVersion?.label ?? 'No version'}</div>
-          </div>
-          {selectedVersionLabel ? <p className="mt-2 rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Preferred version: {selectedVersionLabel}</p> : null}
-          {!isCreator && review.shareSettings.allowComments ? (
-            <button type="button" onClick={handleSaveFeedback} className="mt-3 rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save feedback</button>
-          ) : null}
-          {!isCreator && !review.shareSettings.allowComments ? <p className="mt-3 text-sm text-stone-500">Feedback is disabled for this review.</p> : null}
-          {!isCreator && review.shareSettings.allowDecisions ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={() => handleDecisionChange('Approve', 'approved')} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Approve</button>
-              <button type="button" onClick={() => handleDecisionChange('Request changes', 'changes_requested')} className="rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">Request changes</button>
-              {hasMultipleVersions ? <button type="button" onClick={handleSelectVersion} className="rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">Select preferred version</button> : null}
-              {hasMultipleVersions ? <button type="button" onClick={() => handleDecisionChange('Suggest combining versions', 'combine_options')} className="rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">Merge ideas</button> : null}
-            </div>
-          ) : isCreator ? (
-            <p className="mt-3 text-sm text-stone-600">{review.decision || 'Awaiting client decision.'}</p>
-          ) : (
-            <p className="mt-3 text-sm text-stone-500">Decision actions are disabled for this review.</p>
-          )}
-          {review.decision ? <div className="mt-3 rounded-[10px] border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{review.decision}</div> : null}
-        </section>
-      </>
+        </> : null}
+        {isCreator ? (outcome ? <div className="mt-4 rounded-[10px] border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"><p className="font-semibold uppercase tracking-wide">{outcomeLabel}</p>{outcome.assetVersionId ? <p className="mt-1">Version: {selectedVersionLabel ?? 'Selected version'}</p> : null}{outcome.note ? <p className="mt-2 italic">“{outcome.note}”</p> : null}<p className="mt-2 text-xs text-emerald-800">{outcome.reviewerName ?? 'Reviewer'}{outcome.createdAt ? ` · ${new Date(outcome.createdAt).toLocaleDateString()}` : ''}</p></div> : <p className="mt-3 text-sm text-stone-600">Awaiting client decision.</p>) : null}
+        {!isCreator && !review.shareSettings.allowDecisions ? <p className="mt-3 text-sm text-stone-500">Decisions are disabled for this review.</p> : null}
+        {isCreator && review.overallFeedback ? <div className="mt-4 border-t border-stone-200 pt-3 text-sm text-stone-600"><p className="font-semibold text-stone-800">Previous overall feedback</p><p className="mt-1">{review.overallFeedback}</p></div> : null}
+      </section>
     );
   };
 
@@ -1397,7 +1348,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       <button
         type="button"
         onClick={() => {
-          openDrawerSection('summary');
+          openDrawerSection('decision');
         }}
         aria-label="Open decision progress and finish"
         aria-expanded={isFeedbackDrawerOpen && rightTab === 'feedback'}
@@ -1551,7 +1502,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               {isAssetPickerOpen ? (
                 <div className="absolute left-full top-3 z-40 ml-2 flex max-h-[calc(100vh-160px)] w-44 flex-col rounded-md border border-border bg-surface p-3 shadow-xl">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-text-subtle">Deliverables</p>
-                  <div className="mt-3 grid min-h-0 flex-1 gap-2 overflow-y-auto pr-1">
+                  <div className="mt-3 grid min-h-0 flex-1 auto-rows-max content-start gap-2 overflow-y-auto pr-1">
                     {review.assets.length ? review.assets.map(renderAssetRailButton) : (
                       <div className="rounded-md border border-dashed border-border-strong bg-surface p-3 text-xs leading-5 text-text-subtle">No deliverables in this review yet.</div>
                     )}
@@ -1567,7 +1518,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           ) : (
             <>
               <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-text-subtle">Deliverables</p>
-              <div className="mt-3 grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-1">
+              <div className="mt-3 grid min-h-0 flex-1 auto-rows-max content-start grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-1">
                 {review.assets.length ? review.assets.map(renderAssetRailButton) : (
                   <div className="rounded-md border border-dashed border-border-strong bg-surface p-3 text-xs leading-5 text-text-subtle">No deliverables in this review yet.</div>
                 )}
@@ -1592,15 +1543,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             onChange={handleAssetUpload}
             disabled={isSupabaseConfigured() && !authUser}
           />
-          <div className="flex flex-wrap gap-2">
-            {workflowSteps.map((step, index) => (
-              <div key={step.label} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold ${step.done ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-stone-200 bg-white text-stone-500'}`}>
-                <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] ${step.done ? 'bg-emerald-600 text-white' : 'bg-stone-100 text-stone-500'}`}>{index + 1}</span>
-                {step.label}
-              </div>
-            ))}
-          </div>
-          {renderReviewBrief()}
+          <h2 className="text-lg font-semibold text-stone-950">{activeAsset?.title ?? 'Deliverable'}</h2>
+          {renderDeliverableBrief()}
           <div className="sticky top-0 z-20 flex flex-none flex-col gap-3 border-b border-stone-200 bg-canvas/95 pb-4 pt-1 backdrop-blur xl:flex-row xl:items-center xl:justify-between">
             <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-1">
               {(activeAsset?.versions ?? []).map((version, index) => (
@@ -1654,7 +1598,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             </div>
           </div>
 
-          {activeAsset?.description ? <p className="text-sm text-stone-600"><span className="font-semibold text-stone-900">Deliverable context:</span> {activeAsset.description}</p> : null}
+          {typeof activeVersion?.metadata?.description === 'string' && activeVersion.metadata.description ? <section className="rounded-[10px] border border-stone-200 bg-white px-4 py-3"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Version description</p><p className="mt-2 text-sm leading-6 text-stone-700">{activeVersion.metadata.description}</p></div>{isCreator ? <button type="button" onClick={() => { setVersionDescriptionDraft(activeVersion.metadata?.description as string); setIsEditingVersionDescription(true); }} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700">Edit</button> : null}</div></section> : isCreator ? <button type="button" onClick={() => { setVersionDescriptionDraft(''); setIsEditingVersionDescription(true); }} className="w-fit text-sm font-semibold text-stone-600 hover:text-stone-950">Add version description</button> : null}
+          {isEditingVersionDescription ? <section className="rounded-[10px] border border-stone-200 bg-white p-4"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Version description</p><textarea value={versionDescriptionDraft} onChange={(event) => setVersionDescriptionDraft(event.target.value)} className="mt-3 min-h-20 w-full rounded-[8px] border border-stone-200 px-3 py-2 text-sm" /><div className="mt-3 flex gap-2"><button type="button" onClick={() => setIsEditingVersionDescription(false)} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-700">Cancel</button><button type="button" onClick={saveVersionDescription} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save description</button></div></section> : null}
           <p className="text-sm text-stone-500">{isCreator || review.shareSettings.allowComments ? 'Click anywhere on the preview to add a pinned comment.' : 'Deliverable discussion is disabled for this review.'}</p>
 
           <div className="flex min-h-[calc(100vh-220px)] flex-col pb-10">
@@ -1752,6 +1697,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                 ))}
               </div>
             ) : null}
+            {renderOutcomePanel()}
           </div>
         </section>
         </div>
@@ -1770,10 +1716,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               <FiX aria-hidden="true" className="h-4 w-4" />
             </button>
           </div>
-          <div className="mt-4 space-y-4">
-            {renderNotesPanel()}
-            {renderOutcomePanel()}
-          </div>
+          <div className="mt-4 space-y-4">{renderNotesPanel()}</div>
           {isCreator ? (
             <section ref={settingsSectionRef} className="mt-4 scroll-mt-4 border-t border-stone-200 pt-3">
               <p className="text-sm font-semibold text-stone-950">Creator settings</p>

@@ -1,4 +1,4 @@
-import { initialReview, normalizeReviewData, versionLabel, type AssetVersion, type Comment, type ReviewAsset, type ReviewData } from '@/lib/mock-data';
+import { initialReview, normalizeReviewData, versionLabel, type AssetVersion, type Comment, type DecisionOutcome, type ReviewAsset, type ReviewData } from '@/lib/mock-data';
 import { createSupabaseClientInstance, isSupabaseConfigured } from '@/lib/supabase';
 
 const REVIEW_TABLE = 'reviews';
@@ -176,6 +176,8 @@ interface DecisionRow {
   note: string | null;
   asset_version_id?: string | null;
   option_id?: string | null;
+  reviewer_name?: string | null;
+  created_at?: string | null;
 }
 
 type CommentActivityRow = ActivityRow & {
@@ -637,7 +639,7 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
 
   const { data: richDecisionRows, error: richDecisionError } = await client
     .from(DECISION_TABLE)
-    .select('type, note, asset_version_id, option_id')
+    .select('type, note, asset_version_id, option_id, reviewer_name, created_at')
     .eq('review_id', row.id)
     .order('created_at', { ascending: false })
     .limit(1);
@@ -647,7 +649,7 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
     console.warn('Falling back to legacy decision query:', richDecisionError.message);
     const { data: legacyDecisionRows, error: legacyDecisionError } = await client
       .from(DECISION_TABLE)
-      .select('type, note, option_id')
+      .select('type, note, option_id, reviewer_name, created_at')
       .eq('review_id', row.id)
       .order('created_at', { ascending: false })
       .limit(1);
@@ -667,6 +669,13 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
     comments: mergeComments(reviewWithMetadata.comments, tableComments),
     overallFeedback: feedbackRows?.[0]?.body ?? reviewWithMetadata.overallFeedback,
     decision: latestDecision?.note ?? reviewWithMetadata.decision,
+    decisionOutcome: latestDecision?.type ? {
+      type: latestDecision.type,
+      note: latestDecision.note ?? '',
+      assetVersionId: latestDecision.asset_version_id ?? latestDecision.option_id ?? null,
+      reviewerName: latestDecision.reviewer_name ?? null,
+      createdAt: latestDecision.created_at ?? null,
+    } satisfies DecisionOutcome : reviewWithMetadata.decisionOutcome ?? null,
     selectedDirection: latestDecision?.asset_version_id ?? latestDecision?.option_id ?? reviewWithMetadata.selectedDirection,
     selectedAssetVersionId: latestDecision?.asset_version_id ?? latestDecision?.option_id ?? reviewWithMetadata.selectedAssetVersionId,
   };
@@ -918,7 +927,7 @@ export async function listReviews(): Promise<ReviewSummary[]> {
   });
 }
 
-export async function createReview(): Promise<ReviewData> {
+export async function createReview(title?: string): Promise<ReviewData> {
   if (!isSupabaseConfigured()) {
     throw new Error('Connect Supabase before creating reviews.');
   }
@@ -937,6 +946,7 @@ export async function createReview(): Promise<ReviewData> {
     ? crypto.randomUUID()
     : `review-${Date.now()}`;
   const review = createEmptyReviewData(reviewId);
+  review.title = title?.trim() || review.title;
   const now = new Date().toISOString();
 
   let { data, error } = await client.from(REVIEW_TABLE).insert(reviewUpsertPayload(review, userData.user.id, true, {

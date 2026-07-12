@@ -493,6 +493,13 @@ begin
     end,
     'overallFeedback', coalesce(latest_feedback, review_row.content ->> 'overallFeedback', ''),
     'decision', coalesce(latest_decision.note, review_row.content ->> 'decision', ''),
+    'decisionOutcome', case when latest_decision.id is null then coalesce(review_row.content -> 'decisionOutcome', 'null'::jsonb) else jsonb_build_object(
+      'type', latest_decision.type,
+      'note', latest_decision.note,
+      'assetVersionId', coalesce(latest_decision.asset_version_id, latest_decision.option_id),
+      'reviewerName', latest_decision.reviewer_name,
+      'createdAt', latest_decision.created_at
+    ) end,
     'selectedDirection', coalesce(latest_decision.asset_version_id, latest_decision.option_id, review_row.content ->> 'selectedDirection'),
     'selectedAssetVersionId', coalesce(latest_decision.asset_version_id, latest_decision.option_id, review_row.content ->> 'selectedAssetVersionId'),
     'comments', comments_json
