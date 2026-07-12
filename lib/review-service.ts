@@ -12,6 +12,7 @@ const REVIEW_SELECT_LEGACY = 'id, share_token, title, client_name, instructions,
 
 export interface ReviewSummary {
   id: string;
+  projectId?: string | null;
   shareToken?: string;
   title: string;
   client: string;
@@ -28,6 +29,16 @@ export interface ReviewSummary {
   newActivity: number;
   latestActivityAt: string;
   latestActivityLabel: string;
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  client: string;
+  description: string;
+  status: string;
+  shareToken?: string;
+  reviews: ReviewSummary[];
 }
 
 export type ReviewerDecisionType = 'approved' | 'changes_requested' | 'direction_selected' | 'combine_options';
@@ -843,7 +854,7 @@ export async function listReviews(): Promise<ReviewSummary[]> {
 
   const { data, error } = await client
     .from(REVIEW_TABLE)
-    .select('id, share_token, title, client_name, status, updated_at, creator_seen_at, content')
+    .select('id, project_id, share_token, title, client_name, status, updated_at, creator_seen_at, content')
     .eq('owner_id', userData.user.id)
     .order('updated_at', { ascending: false });
 
@@ -907,6 +918,7 @@ export async function listReviews(): Promise<ReviewSummary[]> {
 
     return {
       id: row.id,
+      projectId: row.project_id ?? null,
       shareToken: row.share_token ?? undefined,
       title: row.title ?? content.title,
       client: row.client_name ?? content.client,
@@ -927,7 +939,7 @@ export async function listReviews(): Promise<ReviewSummary[]> {
   });
 }
 
-export async function createReview(title?: string): Promise<ReviewData> {
+export async function createReview(title?: string, projectId?: string | null): Promise<ReviewData> {
   if (!isSupabaseConfigured()) {
     throw new Error('Connect Supabase before creating reviews.');
   }
@@ -950,6 +962,7 @@ export async function createReview(title?: string): Promise<ReviewData> {
   const now = new Date().toISOString();
 
   let { data, error } = await client.from(REVIEW_TABLE).insert(reviewUpsertPayload(review, userData.user.id, true, {
+    project_id: projectId ?? null,
     status: 'in_review',
     creator_seen_at: now,
     updated_at: now,
@@ -973,6 +986,30 @@ export async function createReview(title?: string): Promise<ReviewData> {
   const reviewWithToken = { ...review, shareToken: data?.share_token ?? review.shareToken };
   await syncReviewRows(reviewWithToken);
   return reviewWithToken;
+}
+
+export async function listProjects(): Promise<ProjectSummary[]> {
+  if (!isSupabaseConfigured()) return [];
+  const client = createSupabaseClientInstance();
+  if (!client) return [];
+  const { data: userData } = await client.auth.getUser();
+  if (!userData.user) return [];
+  const [{ data, error }, reviews] = await Promise.all([
+    client.from('projects').select('id, name, client_name, description, status, share_token').eq('owner_id', userData.user.id).order('updated_at', { ascending: false }),
+    listReviews(),
+  ]);
+  if (error) throw new Error(`Failed to load projects: ${error.message}`);
+  return (data ?? []).map((project) => ({ id: project.id, name: project.name, client: project.client_name ?? '', description: project.description ?? '', status: project.status ?? 'active', shareToken: project.share_token ?? undefined, reviews: reviews.filter((review) => review.projectId === project.id) }));
+}
+
+export async function createProject(input: { name: string; client?: string; description?: string }): Promise<ProjectSummary> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before creating projects.');
+  const { data: userData } = await client.auth.getUser();
+  if (!userData.user) throw new Error('Sign in to create a project.');
+  const { data, error } = await client.from('projects').insert({ owner_id: userData.user.id, name: input.name.trim() || 'Untitled project', client_name: input.client?.trim() || null, description: input.description?.trim() || '' }).select('id, name, client_name, description, status, share_token').single();
+  if (error || !data) throw new Error(`Failed to create project: ${error?.message ?? 'Unknown error'}`);
+  return { id: data.id, name: data.name, client: data.client_name ?? '', description: data.description ?? '', status: data.status ?? 'active', shareToken: data.share_token ?? undefined, reviews: [] };
 }
 
 export async function markReviewSeen(reviewId: string): Promise<void> {
