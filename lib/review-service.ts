@@ -1,4 +1,4 @@
-import { initialReview, normalizeReviewData, versionLabel, type AssetVersion, type Comment, type DecisionOutcome, type ReviewAsset, type ReviewData } from '@/lib/mock-data';
+import { initialReview, normalizeReviewData, versionLabel, type AssetVersion, type Comment, type DecisionOutcome, type ReviewAsset, type ReviewData, type ReviewGoal } from '@/lib/mock-data';
 import { createSupabaseClientInstance, isSupabaseConfigured } from '@/lib/supabase';
 
 const REVIEW_TABLE = 'reviews';
@@ -7,7 +7,7 @@ const ASSET_TABLE = 'assets';
 const ASSET_VERSION_TABLE = 'asset_versions';
 const DECISION_TABLE = 'decisions';
 const FEEDBACK_TABLE = 'review_feedback';
-const REVIEW_SELECT_WITH_BRIEF = 'id, share_token, title, client_name, instructions, brief_message, brief_focus_points, brief_requested_outcome, brief_updated_at, reviewer_name_required, pin_protection_enabled, allow_comments, allow_decisions, content';
+const REVIEW_SELECT_WITH_BRIEF = 'id, share_token, title, client_name, instructions, review_goal, client_visible, brief_message, brief_focus_points, brief_requested_outcome, brief_updated_at, reviewer_name_required, pin_protection_enabled, allow_comments, allow_decisions, content';
 const REVIEW_SELECT_LEGACY = 'id, share_token, title, client_name, instructions, reviewer_name_required, pin_protection_enabled, allow_comments, allow_decisions, content';
 
 export interface ReviewSummary {
@@ -41,10 +41,18 @@ export interface ProjectSummary {
   reviews: ReviewSummary[];
 }
 
-export type ReviewerDecisionType = 'approved' | 'changes_requested' | 'direction_selected' | 'combine_options';
+export interface SharedProject {
+  title: string;
+  client: string;
+  description: string;
+  reviews: Array<{ title: string; status: string; shareToken: string; updatedAt: string; deliverableCount: number; openCommentCount: number }>;
+}
+
+export type ReviewerDecisionType = 'reviewed' | 'approved' | 'changes_requested' | 'direction_selected' | 'combine_options';
 
 export interface ReviewerDecisionInput {
   reviewId: string;
+  assetId: string;
   shareToken?: string;
   assetVersionId?: string | null;
   reviewerName: string;
@@ -79,6 +87,8 @@ interface ReviewRow {
   title?: string | null;
   client_name?: string | null;
   instructions?: string | null;
+  review_goal?: 'feedback_only' | 'select_version' | 'approve_final' | 'approve' | null;
+  client_visible?: boolean | null;
   brief_message?: string | null;
   brief_focus_points?: string[] | null;
   brief_requested_outcome?: string | null;
@@ -102,6 +112,8 @@ function reviewUpsertPayload(review: ReviewData, ownerId: string, includeBriefCo
     title: review.title,
     client_name: review.client,
     instructions: review.instructions,
+    review_goal: review.reviewGoal,
+    client_visible: review.clientVisible,
     ...(includeBriefColumns ? {
       brief_message: review.brief.message,
       brief_focus_points: review.brief.focusPoints,
@@ -186,6 +198,7 @@ interface DecisionRow {
   type: ReviewerDecisionType | null;
   note: string | null;
   asset_version_id?: string | null;
+  asset_id?: string | null;
   option_id?: string | null;
   reviewer_name?: string | null;
   created_at?: string | null;
@@ -206,6 +219,8 @@ export function createEmptyReviewData(reviewId: string): ReviewData {
     title: 'Untitled review',
     client: '',
     instructions: '',
+    reviewGoal: 'approve_final',
+    clientVisible: false,
     brief: {
       message: '',
       focusPoints: [],
@@ -223,7 +238,7 @@ export function createEmptyReviewData(reviewId: string): ReviewData {
         id: assetId,
         reviewId,
         title: 'Primary deliverable',
-        description: 'A reviewable asset for client feedback.',
+        description: '',
         assetType: 'screenshot',
         sortOrder: 0,
         status: 'in_review',
@@ -250,9 +265,11 @@ export function createEmptyReviewData(reviewId: string): ReviewData {
 }
 
 function getReviewStatus(review: ReviewData) {
-  if (review.decision === 'Approve') return 'approved';
-  if (review.decision === 'Request changes') return 'changes_requested';
-  if (review.selectedAssetVersionId || review.selectedDirection) return 'direction_selected';
+  const outcomes = Object.values(review.decisionOutcomes ?? {});
+  if (outcomes.some((outcome) => outcome.type === 'changes_requested')) return 'changes_requested';
+  if (review.reviewGoal === 'approve_final' && review.assets.length > 0 && review.assets.every((asset) => review.decisionOutcomes?.[asset.id]?.type === 'approved')) return 'approved';
+  if (review.reviewGoal === 'select_version' && review.assets.length > 0 && review.assets.every((asset) => review.decisionOutcomes?.[asset.id]?.type === 'direction_selected')) return 'completed';
+  if (review.reviewGoal === 'feedback_only' && review.assets.length > 0 && review.assets.every((asset) => review.decisionOutcomes?.[asset.id]?.type === 'reviewed')) return 'completed';
   return 'in_review';
 }
 
@@ -421,6 +438,7 @@ async function syncReviewRows(review: ReviewData) {
       processing_status: version.status ?? 'idle',
       status: version.status ?? 'idle',
       metadata: {
+        ...(version.metadata ?? {}),
         originalName: version.originalName ?? null,
         originalMimeType: version.originalMimeType ?? null,
         originalBytes: version.originalBytes ?? null,
@@ -489,7 +507,7 @@ function mapStructuredAssets(baseReview: ReviewData, assetRows: AssetRow[], vers
         ...snapshotAsset,
         id: assetRow.id,
         reviewId: assetRow.review_id,
-        title: assetRow.title ?? snapshotAsset?.title ?? 'Review asset',
+        title: assetRow.title ?? snapshotAsset?.title ?? 'Review deliverable',
         description: assetRow.description ?? snapshotAsset?.description ?? '',
         instructions: readStringMetadata(assetRow.metadata, 'instructions') ?? snapshotAsset?.instructions,
         assetType: appAssetType(assetRow.type),
@@ -591,6 +609,8 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
     title: row.title ?? row.content?.title,
     client: row.client_name ?? row.content?.client,
     instructions: row.instructions ?? row.content?.instructions,
+    reviewGoal: row.review_goal === 'feedback_only' || row.review_goal === 'select_version' || row.review_goal === 'approve_final' ? row.review_goal : row.content?.reviewGoal,
+    clientVisible: row.client_visible ?? row.content?.clientVisible ?? false,
     brief: {
       message: row.brief_message ?? row.content?.brief?.message ?? '',
       focusPoints: row.brief_focus_points ?? row.content?.brief?.focusPoints ?? [],
@@ -650,10 +670,10 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
 
   const { data: richDecisionRows, error: richDecisionError } = await client
     .from(DECISION_TABLE)
-    .select('type, note, asset_version_id, option_id, reviewer_name, created_at')
+    .select('type, note, asset_id, asset_version_id, option_id, reviewer_name, created_at')
     .eq('review_id', row.id)
     .order('created_at', { ascending: false })
-    .limit(1);
+    .limit(500);
 
   let decisionRows = (richDecisionRows ?? []) as DecisionRow[];
   if (richDecisionError) {
@@ -673,6 +693,11 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
   }
 
   const latestDecision = decisionRows?.[0];
+  const decisionOutcomes = decisionRows.reduce<Record<string, DecisionOutcome>>((outcomes, decision) => {
+    const assetId = decision.asset_id;
+    if (assetId && decision.type && !outcomes[assetId]) outcomes[assetId] = { type: decision.type, note: decision.note ?? '', assetVersionId: decision.asset_version_id ?? decision.option_id ?? null, reviewerName: decision.reviewer_name ?? null, createdAt: decision.created_at ?? null };
+    return outcomes;
+  }, {});
 
   const creatorReview = {
     ...reviewWithMetadata,
@@ -687,6 +712,7 @@ async function hydrateReviewFromRow(row: ReviewRow): Promise<ReviewData> {
       reviewerName: latestDecision.reviewer_name ?? null,
       createdAt: latestDecision.created_at ?? null,
     } satisfies DecisionOutcome : reviewWithMetadata.decisionOutcome ?? null,
+    decisionOutcomes,
     selectedDirection: latestDecision?.asset_version_id ?? latestDecision?.option_id ?? reviewWithMetadata.selectedDirection,
     selectedAssetVersionId: latestDecision?.asset_version_id ?? latestDecision?.option_id ?? reviewWithMetadata.selectedAssetVersionId,
   };
@@ -716,14 +742,20 @@ function normalizeSharedReviewPayload(payload: unknown, shareToken: string): Rev
 }
 
 async function loadSharedReviewPayload(client: NonNullable<ReturnType<typeof createSupabaseClientInstance>>, shareToken: string) {
-  const { data, error } = await client.rpc('get_shared_review', { p_share_token: shareToken });
+  const [{ data, error }, contextResult] = await Promise.all([
+    client.rpc('get_shared_review', { p_share_token: shareToken }),
+    client.rpc('get_shared_review_decision_context', { p_share_token: shareToken }),
+  ]);
 
   if (error) {
     console.error('Failed to load shared review from Supabase:', error.message);
     return null;
   }
 
-  return normalizeSharedReviewPayload(data, shareToken);
+  const context = contextResult.error || !contextResult.data || typeof contextResult.data !== 'object'
+    ? {}
+    : contextResult.data as Record<string, unknown>;
+  return normalizeSharedReviewPayload({ ...(data as Record<string, unknown>), ...context }, shareToken);
 }
 
 export async function loadReviewById(reviewId: string): Promise<ReviewData> {
@@ -939,7 +971,7 @@ export async function listReviews(): Promise<ReviewSummary[]> {
   });
 }
 
-export async function createReview(title?: string, projectId?: string | null): Promise<ReviewData> {
+export async function createReview(title?: string, projectId?: string | null, reviewGoal: ReviewGoal = 'approve_final'): Promise<ReviewData> {
   if (!isSupabaseConfigured()) {
     throw new Error('Connect Supabase before creating reviews.');
   }
@@ -959,6 +991,10 @@ export async function createReview(title?: string, projectId?: string | null): P
     : `review-${Date.now()}`;
   const review = createEmptyReviewData(reviewId);
   review.title = title?.trim() || review.title;
+  review.reviewGoal = reviewGoal;
+  // A review created from a Project is intended for that project's client-facing flow.
+  // Creators can still turn this off from Review settings before sharing.
+  review.clientVisible = Boolean(projectId);
   const now = new Date().toISOString();
 
   let { data, error } = await client.from(REVIEW_TABLE).insert(reviewUpsertPayload(review, userData.user.id, true, {
@@ -970,6 +1006,7 @@ export async function createReview(title?: string, projectId?: string | null): P
 
   if (error && isMissingBriefColumnError(error)) {
     const legacyInsert = await client.from(REVIEW_TABLE).insert(reviewUpsertPayload(review, userData.user.id, false, {
+      project_id: projectId ?? null,
       status: 'in_review',
       creator_seen_at: now,
       updated_at: now,
@@ -1010,6 +1047,14 @@ export async function createProject(input: { name: string; client?: string; desc
   const { data, error } = await client.from('projects').insert({ owner_id: userData.user.id, name: input.name.trim() || 'Untitled project', client_name: input.client?.trim() || null, description: input.description?.trim() || '' }).select('id, name, client_name, description, status, share_token').single();
   if (error || !data) throw new Error(`Failed to create project: ${error?.message ?? 'Unknown error'}`);
   return { id: data.id, name: data.name, client: data.client_name ?? '', description: data.description ?? '', status: data.status ?? 'active', shareToken: data.share_token ?? undefined, reviews: [] };
+}
+
+export async function loadSharedProject(shareToken: string): Promise<SharedProject | null> {
+  const client = createSupabaseClientInstance();
+  if (!client) return null;
+  const { data, error } = await client.rpc('get_shared_project', { p_share_token: shareToken });
+  if (error || !data || typeof data !== 'object') return null;
+  return data as SharedProject;
 }
 
 export async function markReviewSeen(reviewId: string): Promise<void> {
@@ -1105,8 +1150,8 @@ export async function createAsset(review: ReviewData, payload: Partial<ReviewAss
   const asset: ReviewAsset = {
     id: assetId,
     reviewId: review.id,
-    title: payload.title ?? 'Review asset',
-    description: payload.description ?? 'A reviewable asset.',
+    title: payload.title ?? 'Review deliverable',
+    description: payload.description ?? '',
     instructions: payload.instructions,
     assetType: payload.assetType ?? 'screenshot',
     sortOrder: payload.sortOrder ?? review.assets.length,
@@ -1507,6 +1552,7 @@ export async function saveReviewerDecision(input: ReviewerDecisionInput): Promis
   const decisionRow = {
     id: decisionId,
     review_id: input.reviewId,
+    asset_id: input.assetId,
     asset_version_id: input.assetVersionId ?? null,
     option_id: null,
     reviewer_name: input.reviewerName,
@@ -1519,6 +1565,7 @@ export async function saveReviewerDecision(input: ReviewerDecisionInput): Promis
       p_share_token: input.shareToken,
       p_decision_id: decisionId,
       p_review_id: input.reviewId,
+      p_asset_id: input.assetId,
       p_asset_version_id: input.assetVersionId ?? null,
       p_reviewer_name: input.reviewerName,
       p_type: input.type,

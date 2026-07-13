@@ -1,72 +1,57 @@
 # WizerView UX Architecture v1
 
-This document captures the locked UX direction.
-
-## Product Philosophy
-WizerView is a guided creative review workflow.
+This document captures the current guided creative-review direction.
 
 ## Review Hierarchy
-- Review Objective
+
+- Review Goal
 - Review Brief
-- Assets
-  - Asset Context
+- Deliverables
+  - Deliverable Brief
   - Versions
     - Version Description
     - Discussion
-  - Asset Decision
+  - Deliverable Decision + Decision Note
 - Review Completion
 
-## Review Brief
-- Large card above workspace.
-- Auto-collapses into a floating chip after slight preview scroll.
-- Expand again on click.
-
 ## Workspace
+
+```text
 Header
-
 Review Brief
+Deliverable rail | Preview workspace | Review drawer
+```
 
-Asset Rail | Preview Workspace | Review Drawer
+There is no bottom toolbar. The preview remains the primary visual surface.
 
-No bottom toolbar.
+## Review Drawer
 
-## Drawer
-One continuous scroll:
-- Discussion
-- Pinned comments
-- Review Summary
-- Final Decision
-- Creator Settings (creator only)
+The drawer is a continuous scroll for discussion. Its navigation controls scroll to discussion or the deliverable decision rather than switching product modes. Creator settings open in a lightweight dialog.
 
-Sidebar icons are navigation shortcuts that scroll to sections rather than switching modes.
+## Preview and Rail
 
-## Layout
-- Drawer docks and shrinks preview.
-- Never overlays preview.
-- Asset rail collapses to compact Assets button when drawer opens.
-
-## Preview
-- Single framed preview.
-- No nested cards.
-- Preview container owns scrolling.
+- The drawer docks beside the preview at desktop sizes.
+- The deliverable rail collapses while the drawer is open.
+- Preview thumbnails retain their own fixed visual height; they do not stretch to fill the rail.
+- The preview container owns scrolling.
 
 ## Version Toolbar
-- Version tabs
-- Select version
-- Download
-- Overflow
-- Helper text: Click anywhere on the preview to add a pinned comment.
 
-## Context Levels
-- Review Brief
-- Asset Context
-- Version Description
+- Named, truncating version tabs
+- Lightweight New Version / Rename Version dialog
+- Version selection where relevant to the review goal
+- Download and overflow controls
+- Pinned-discussion helper text
 
 ## Review Flow
-Review Brief → Assets → Discussion → Review Summary → Final Decision.
+
+```text
+Review Brief -> Deliverable Brief -> Version Description -> Discussion -> Deliverable Decision + Decision Note
+```
 
 ## Acceptance Criteria
-- One drawer scrollbar.
-- No bottom toolbar.
-- Decision integrated into workflow.
-- Existing comments, pins and permissions preserved.
+
+- One drawer scrollbar and no bottom toolbar
+- Pinned discussion, comments, and permissions remain intact
+- Decision is deliverable-scoped and follows the selected review goal
+- Version display names do not alter version IDs, ordering, or relationships

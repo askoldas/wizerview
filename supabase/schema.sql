@@ -5,6 +5,10 @@ create table if not exists public.projects (
   owner_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
   client_name text,
+  description text not null default '',
+  status text not null default 'active' check (status in ('active', 'completed', 'archived')),
+  share_token text unique default encode(gen_random_bytes(24), 'hex'),
+  archived_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -16,11 +20,13 @@ create table if not exists public.reviews (
   title text not null default 'Untitled review',
   client_name text,
   instructions text not null default '',
+  review_goal text not null default 'approve_final' check (review_goal in ('feedback_only', 'select_version', 'approve_final')),
+  client_visible boolean not null default false,
   brief_message text not null default '',
   brief_focus_points text[] not null default '{}'::text[],
   brief_requested_outcome text not null default '',
   brief_updated_at timestamptz,
-  status text not null default 'draft' check (status in ('draft', 'in_review', 'changes_requested', 'direction_selected', 'approved', 'archived')),
+  status text not null default 'draft' check (status in ('draft', 'in_review', 'changes_requested', 'direction_selected', 'approved', 'completed', 'archived')),
   share_token text not null unique default encode(gen_random_bytes(24), 'hex'),
   reviewer_name_required boolean not null default true,
   pin_protection_enabled boolean not null default false,
@@ -32,11 +38,18 @@ create table if not exists public.reviews (
   updated_at timestamptz not null default now()
 );
 
+alter table public.projects add column if not exists description text not null default '';
+alter table public.projects add column if not exists status text not null default 'active';
+alter table public.projects add column if not exists share_token text unique default encode(gen_random_bytes(24), 'hex');
+alter table public.projects add column if not exists archived_at timestamptz;
+
 alter table public.reviews add column if not exists project_id uuid references public.projects(id) on delete set null;
 alter table public.reviews add column if not exists owner_id uuid references auth.users(id) on delete cascade;
 alter table public.reviews add column if not exists title text not null default 'Untitled review';
 alter table public.reviews add column if not exists client_name text;
 alter table public.reviews add column if not exists instructions text not null default '';
+alter table public.reviews add column if not exists review_goal text not null default 'approve_final';
+alter table public.reviews add column if not exists client_visible boolean not null default false;
 alter table public.reviews add column if not exists brief_message text not null default '';
 alter table public.reviews add column if not exists brief_focus_points text[] not null default '{}'::text[];
 alter table public.reviews add column if not exists brief_requested_outcome text not null default '';
@@ -258,10 +271,11 @@ alter table public.comments add column if not exists updated_at timestamptz not 
 create table if not exists public.decisions (
   id text primary key,
   review_id text not null references public.reviews(id) on delete cascade,
+  asset_id text references public.assets(id) on delete set null,
   asset_version_id text references public.asset_versions(id) on delete set null,
   option_id text references public.review_options(id) on delete set null,
   reviewer_name text not null,
-  type text not null check (type in ('approved', 'changes_requested', 'direction_selected', 'combine_options')),
+  type text not null check (type in ('reviewed', 'approved', 'changes_requested', 'direction_selected', 'combine_options')),
   note text not null default '',
   created_at timestamptz not null default now()
 );
@@ -275,6 +289,7 @@ create table if not exists public.review_feedback (
 );
 
 alter table public.decisions add column if not exists review_id text references public.reviews(id) on delete cascade;
+alter table public.decisions add column if not exists asset_id text references public.assets(id) on delete set null;
 alter table public.decisions add column if not exists asset_version_id text references public.asset_versions(id) on delete set null;
 alter table public.decisions add column if not exists option_id text references public.review_options(id) on delete set null;
 alter table public.decisions add column if not exists reviewer_name text not null default 'Reviewer';
@@ -301,17 +316,20 @@ create or replace function public.sync_review_status_from_decision()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, pg_temp
 as $$
+declare
+  goal text;
+  total_assets integer;
+  completed_assets integer;
+  has_changes boolean;
 begin
+  select review_goal into goal from public.reviews where id = new.review_id;
+  select count(*) into total_assets from public.assets where review_id = new.review_id;
+  select exists(select 1 from (select distinct on (asset_id) asset_id, type from public.decisions where review_id = new.review_id and asset_id is not null order by asset_id, created_at desc) latest where type = 'changes_requested') into has_changes;
+  select count(*) into completed_assets from (select distinct on (asset_id) asset_id, type from public.decisions where review_id = new.review_id and asset_id is not null order by asset_id, created_at desc) latest where (goal = 'approve_final' and type = 'approved') or (goal = 'select_version' and type = 'direction_selected') or (goal = 'feedback_only' and type = 'reviewed');
   update public.reviews
-  set status = case new.type
-      when 'approved' then 'approved'
-      when 'changes_requested' then 'changes_requested'
-      when 'direction_selected' then 'direction_selected'
-      when 'combine_options' then 'changes_requested'
-      else status
-    end,
+  set status = case when has_changes then 'changes_requested' when total_assets > 0 and completed_assets = total_assets and goal = 'approve_final' then 'approved' when total_assets > 0 and completed_assets = total_assets then 'completed' else 'in_review' end,
     updated_at = now()
   where id = new.review_id
     and status not in ('draft', 'archived');
@@ -507,6 +525,42 @@ begin
 end;
 $$;
 
+create or replace function public.get_shared_review_decision_context(p_share_token text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  review_row public.reviews%rowtype;
+  outcomes jsonb;
+begin
+  select * into review_row from public.reviews
+  where share_token = p_share_token and status not in ('draft', 'archived');
+  if not found then return null; end if;
+
+  select coalesce(jsonb_object_agg(latest.asset_id, jsonb_build_object(
+    'type', latest.type,
+    'note', latest.note,
+    'assetVersionId', coalesce(latest.asset_version_id, latest.option_id),
+    'reviewerName', latest.reviewer_name,
+    'createdAt', latest.created_at
+  )), '{}'::jsonb)
+  into outcomes
+  from (
+    select distinct on (asset_id) asset_id, type, note, asset_version_id, option_id, reviewer_name, created_at
+    from public.decisions
+    where review_id = review_row.id and asset_id is not null
+    order by asset_id, created_at desc
+  ) latest;
+
+  return jsonb_build_object(
+    'reviewGoal', coalesce(review_row.review_goal, 'approve_final'),
+    'decisionOutcomes', outcomes
+  );
+end;
+$$;
+
 create or replace function public.add_shared_comment(
   p_share_token text,
   p_comment_id text,
@@ -625,6 +679,7 @@ create or replace function public.add_shared_decision(
   p_share_token text,
   p_decision_id text,
   p_review_id text,
+  p_asset_id text,
   p_asset_version_id text,
   p_reviewer_name text,
   p_type text,
@@ -650,15 +705,22 @@ begin
     raise exception 'Shared review is not accepting decisions.';
   end if;
 
-  if p_asset_version_id is not null and not exists (
-    select 1 from public.asset_versions where id = p_asset_version_id and review_id = matched_review.id
+  if not exists (
+    select 1 from public.assets where id = p_asset_id and review_id = matched_review.id
   ) then
-    raise exception 'Asset version does not belong to shared review.';
+    raise exception 'Deliverable does not belong to shared review.';
+  end if;
+
+  if p_asset_version_id is not null and not exists (
+    select 1 from public.asset_versions where id = p_asset_version_id and asset_id = p_asset_id and review_id = matched_review.id
+  ) then
+    raise exception 'Version does not belong to deliverable.';
   end if;
 
   insert into public.decisions (
     id,
     review_id,
+    asset_id,
     asset_version_id,
     reviewer_name,
     type,
@@ -667,6 +729,7 @@ begin
   values (
     p_decision_id,
     matched_review.id,
+    p_asset_id,
     p_asset_version_id,
     nullif(trim(p_reviewer_name), ''),
     p_type,
@@ -797,9 +860,10 @@ drop policy if exists "Visible feedback belongs to visible reviews" on public.re
 drop policy if exists "Anyone with visible review can leave feedback" on public.review_feedback;
 
 grant execute on function public.get_shared_review(text) to anon, authenticated;
+grant execute on function public.get_shared_review_decision_context(text) to anon, authenticated;
 grant execute on function public.add_shared_comment(text, text, text, text, text, text, text, text, numeric, numeric, integer) to anon, authenticated;
 grant execute on function public.add_shared_feedback(text, text, text, text, text) to anon, authenticated;
-grant execute on function public.add_shared_decision(text, text, text, text, text, text, text) to anon, authenticated;
+grant execute on function public.add_shared_decision(text, text, text, text, text, text, text, text) to anon, authenticated;
 
 drop policy if exists "Prototype can create shared reviews" on public.reviews;
 

@@ -15,7 +15,7 @@ export default function FeaturesPage() {
       <CardGrid title="Feature set" cards={[
         { title: 'Visual comments', text: 'Click directly on the deliverable and leave feedback in context.' },
         { title: 'Guest reviewers', text: 'Clients can review without creating an account.' },
-        { title: 'Asset versions', text: 'Keep new versions connected to the same review.' },
+        { title: 'Deliverable versions', text: 'Keep new versions connected to the same review.' },
         { title: 'Approval workflow', text: 'Clients can approve or request changes.' },
         { title: 'Comment resolution', text: 'Resolve feedback and keep track of what changed.' },
         { title: 'Secure review links', text: 'Share private review links with clients.' },
