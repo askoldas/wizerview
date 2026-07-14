@@ -6,6 +6,7 @@ const companyLinks = [
   { href: 'mailto:hello@wizerview.app', label: 'Contact' },
   { href: '/privacy', label: 'Privacy' },
   { href: '/terms', label: 'Terms' },
+  { href: '/support', label: 'Support' },
 ];
 
 export function MarketingFooter() {

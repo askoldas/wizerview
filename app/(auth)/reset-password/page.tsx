@@ -1,11 +1,6 @@
 import type { Metadata } from 'next';
-import { AuthFallbackPage } from '@/components/auth/auth-fallback-page';
+import { ResetPasswordForm } from '@/components/auth/reset-password-form';
 
-export const metadata: Metadata = {
-  title: 'Reset password — WizerView',
-  robots: { index: false, follow: false },
-};
+export const metadata: Metadata = { title: 'Reset password — WizerView', robots: { index: false, follow: false } };
 
-export default function ResetPasswordPage() {
-  return <AuthFallbackPage mode="login" />;
-}
+export default function ResetPasswordPage() { return <ResetPasswordForm />; }

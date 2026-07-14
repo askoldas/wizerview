@@ -8,16 +8,19 @@ interface AssetSurfaceProps {
   version?: AssetVersion;
   overlay?: ReactNode;
   scrollContainerRef?: RefObject<HTMLDivElement>;
+  zoom?: number;
 }
 
-export function AssetSurface({ asset, version, overlay, scrollContainerRef }: AssetSurfaceProps) {
+export function AssetSurface({ asset, version, overlay, scrollContainerRef, zoom = 1 }: AssetSurfaceProps) {
   if (version?.previewUrl && version.status === 'ready') {
     return (
-      <div ref={scrollContainerRef} className="mx-auto w-full max-w-[1120px] rounded-[12px] border border-stone-200 bg-white p-3 shadow-sm">
-        <div className="relative w-full overflow-visible">
-          {/* eslint-disable-next-line @next/next/no-img-element -- Review previews may be blob or storage URLs. */}
-          <img src={version.previewUrl} alt={`${asset.title} ${version.label}`} decoding="async" className="block h-auto w-full rounded-[8px]" />
-          {overlay}
+      <div ref={scrollContainerRef} className="mx-auto w-full max-w-[1120px] overflow-auto rounded-[12px]">
+        <div className="min-w-full rounded-[12px] border border-stone-200 bg-white p-3 shadow-sm" style={{ width: `${zoom * 100}%`, marginInline: zoom < 1 ? 'auto' : undefined }}>
+          <div className="relative w-full overflow-visible">
+            {/* eslint-disable-next-line @next/next/no-img-element -- Review previews may be blob or storage URLs. */}
+            <img src={version.previewUrl} alt={`${asset.title} ${version.label}`} decoding="async" className="block h-auto w-full rounded-[8px]" />
+            {overlay}
+          </div>
         </div>
       </div>
     );

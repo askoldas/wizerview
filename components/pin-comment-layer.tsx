@@ -7,9 +7,10 @@ interface PinCommentLayerProps {
   asset: ReviewAsset;
   version?: AssetVersion;
   comments: Comment[];
-  onAddComment: (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string) => void;
+  onAddComment: (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string, pageNumber?: number) => void;
   activeCommentId: string | null;
   onSelectComment: (commentId: string | null) => void;
+  pageNumber?: number;
 }
 
 function commentMatchesVersion(comment: Comment, asset: ReviewAsset, version?: AssetVersion) {
@@ -22,7 +23,7 @@ function commentMatchesVersion(comment: Comment, asset: ReviewAsset, version?: A
   return asset.versions.length <= 1 && !comment.assetVersionId && !comment.optionId;
 }
 
-export function PinCommentLayer({ asset, version, comments, onAddComment, activeCommentId, onSelectComment }: PinCommentLayerProps) {
+export function PinCommentLayer({ asset, version, comments, onAddComment, activeCommentId, onSelectComment, pageNumber }: PinCommentLayerProps) {
   const [draftText, setDraftText] = useState('');
   const [activePin, setActivePin] = useState<{ x: number; y: number } | null>(null);
 
@@ -45,7 +46,7 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
   const handleSave = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     if (!version || !activePin || !draftText.trim()) return;
-    onAddComment(asset.id, version.id, activePin.x, activePin.y, draftText.trim(), '');
+    onAddComment(asset.id, version.id, activePin.x, activePin.y, draftText.trim(), '', pageNumber);
     setDraftText('');
     setActivePin(null);
   };
@@ -63,7 +64,7 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
       ) : null}
 
       {comments
-        .filter((comment) => commentMatchesVersion(comment, asset, version) && !comment.parentCommentId && comment.x != null && comment.y != null)
+        .filter((comment) => commentMatchesVersion(comment, asset, version) && (pageNumber == null || (comment.pageNumber ?? 1) === pageNumber) && !comment.parentCommentId && comment.x != null && comment.y != null)
         .map((comment, index) => {
           const isCreatorNote = comment.authorRole === 'creator';
           return (

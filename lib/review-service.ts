@@ -1,5 +1,6 @@
 import { initialReview, normalizeReviewData, versionLabel, type AssetVersion, type Comment, type DecisionOutcome, type ReviewAsset, type ReviewData, type ReviewGoal } from '@/lib/mock-data';
 import { createSupabaseClientInstance, isSupabaseConfigured } from '@/lib/supabase';
+import type { ActiveWorkUsage } from '@/lib/domain';
 
 const REVIEW_TABLE = 'reviews';
 const COMMENT_TABLE = 'comments';
@@ -41,11 +42,75 @@ export interface ProjectSummary {
   reviews: ReviewSummary[];
 }
 
+export type ProjectRequestStatus = 'new' | 'discussing' | 'in_progress' | 'ready_for_review' | 'closed' | 'declined';
+
+export interface ProjectRequestSummary {
+  id: string;
+  projectId: string;
+  title: string;
+  brief: string;
+  status: ProjectRequestStatus;
+  requestedByName: string;
+  linkedReviewId: string | null;
+  updatedAt: string;
+}
+
+export interface CreatorProjectRequestDetail extends ProjectRequestSummary {
+  references: Array<{ id: string; type: string; title: string | null; url: string | null; note: string | null; createdByRole: 'client' | 'creator'; createdByName: string | null }>;
+  messages: Array<{ id: string; authorRole: 'client' | 'creator'; authorName: string; body: string; createdAt: string }>;
+}
+
 export interface SharedProject {
+  requiresAccessCode?: boolean;
   title: string;
   client: string;
   description: string;
   reviews: Array<{ title: string; status: string; shareToken: string; updatedAt: string; deliverableCount: number; openCommentCount: number }>;
+  requests?: Array<{ id: string; title: string; status: string; requestedByName: string; linkedReviewShareToken?: string | null; updatedAt: string; messageCount: number }>;
+  allowClientRequests?: boolean;
+}
+
+export async function addSharedProjectRequest(input: { shareToken: string; reviewerName: string; title: string; brief: string }) {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('This project is not available.');
+  const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `request-${Date.now()}`;
+  const { error } = await client.rpc('add_shared_project_request', { p_share_token: input.shareToken, p_request_id: id, p_reviewer_name: input.reviewerName, p_title: input.title, p_brief: input.brief });
+  if (error) throw new Error('Could not send the request. Please try again.');
+}
+
+export interface SharedProjectRequest {
+  projectTitle: string;
+  request: { id: string; title: string; brief: string; status: ProjectRequestStatus; requestedByName: string; updatedAt: string };
+  references: Array<{ id: string; type: 'image' | 'pdf' | 'link'; title?: string | null; url?: string | null; note?: string | null; createdByRole: 'client' | 'creator'; createdByName?: string | null }>;
+  messages: Array<{ id: string; authorRole: 'client' | 'creator'; authorName: string; body: string; createdAt: string }>;
+  allowClientRequestReplies: boolean;
+  allowClientRequestReferences: boolean;
+}
+
+function newRequestId(prefix: string) {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${prefix}-${Date.now()}`;
+}
+
+export async function loadSharedProjectRequest(shareToken: string, requestId: string, accessCode?: string): Promise<SharedProjectRequest | null> {
+  const client = createSupabaseClientInstance();
+  if (!client) return null;
+  const { data, error } = await client.rpc('get_shared_project_request', { p_share_token: shareToken, p_request_id: requestId, p_access_code: accessCode ?? null });
+  if (error || !data || typeof data !== 'object') return null;
+  return data as SharedProjectRequest;
+}
+
+export async function addSharedProjectRequestMessage(input: { shareToken: string; requestId: string; accessCode?: string; authorName: string; body: string }) {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('This request is not available.');
+  const { error } = await client.rpc('add_shared_project_request_message', { p_share_token: input.shareToken, p_request_id: input.requestId, p_access_code: input.accessCode ?? null, p_message_id: newRequestId('request-message'), p_author_name: input.authorName, p_body: input.body });
+  if (error) throw new Error('Could not send the reply. Please try again.');
+}
+
+export async function addSharedProjectRequestLink(input: { shareToken: string; requestId: string; accessCode?: string; authorName: string; title: string; url: string; note: string }) {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('This request is not available.');
+  const { error } = await client.rpc('add_shared_project_request_link', { p_share_token: input.shareToken, p_request_id: input.requestId, p_access_code: input.accessCode ?? null, p_reference_id: newRequestId('request-reference'), p_author_name: input.authorName, p_title: input.title, p_url: input.url, p_note: input.note });
+  if (error) throw new Error('Could not add the reference. Please try again.');
 }
 
 export type ReviewerDecisionType = 'reviewed' | 'approved' | 'changes_requested' | 'direction_selected' | 'combine_options';
@@ -456,6 +521,34 @@ async function syncReviewRows(review: ReviewData) {
       console.warn('Failed to sync asset versions to Supabase. Apply the asset_versions migration to enable structured version rows:', error.message);
     }
   }
+
+  const pdfPageRows = review.assets.flatMap((asset) => asset.versions.flatMap((version) => {
+    const pages = version.metadata?.pdfPages;
+    if (!Array.isArray(pages)) return [];
+    return pages.flatMap((page) => {
+      if (!page || typeof page !== 'object') return [];
+      const candidate = page as Record<string, unknown>;
+      const pageNumber = Number(candidate.pageNumber);
+      if (!Number.isInteger(pageNumber) || pageNumber < 1) return [];
+      return [{
+        id: `${version.id}-page-${pageNumber}`,
+        asset_version_id: version.id,
+        page_number: pageNumber,
+        preview_storage_path: typeof candidate.storagePath === 'string' ? candidate.storagePath : null,
+        thumbnail_storage_path: typeof candidate.thumbnailStoragePath === 'string' ? candidate.thumbnailStoragePath : null,
+        width: typeof candidate.width === 'number' ? candidate.width : null,
+        height: typeof candidate.height === 'number' ? candidate.height : null,
+        processing_status: typeof candidate.status === 'string' ? candidate.status : 'ready',
+      }];
+    });
+  }));
+
+  if (pdfPageRows.length > 0) {
+    const { error } = await client.from('asset_version_pages').upsert(pdfPageRows);
+    if (error) {
+      console.warn('Failed to sync PDF page rows to Supabase:', error.message);
+    }
+  }
 }
 
 function mapStructuredAssets(baseReview: ReviewData, assetRows: AssetRow[], versionRows: AssetVersionRow[]) {
@@ -743,7 +836,7 @@ function normalizeSharedReviewPayload(payload: unknown, shareToken: string): Rev
 
 async function loadSharedReviewPayload(client: NonNullable<ReturnType<typeof createSupabaseClientInstance>>, shareToken: string) {
   const [{ data, error }, contextResult] = await Promise.all([
-    client.rpc('get_shared_review', { p_share_token: shareToken }),
+    client.rpc('get_shared_review_secure', { p_share_token: shareToken }),
     client.rpc('get_shared_review_decision_context', { p_share_token: shareToken }),
   ]);
 
@@ -1000,6 +1093,7 @@ export async function createReview(title?: string, projectId?: string | null, re
   let { data, error } = await client.from(REVIEW_TABLE).insert(reviewUpsertPayload(review, userData.user.id, true, {
     project_id: projectId ?? null,
     status: 'in_review',
+    lifecycle: 'open',
     creator_seen_at: now,
     updated_at: now,
   })).select('share_token').single();
@@ -1008,6 +1102,7 @@ export async function createReview(title?: string, projectId?: string | null, re
     const legacyInsert = await client.from(REVIEW_TABLE).insert(reviewUpsertPayload(review, userData.user.id, false, {
       project_id: projectId ?? null,
       status: 'in_review',
+      lifecycle: 'open',
       creator_seen_at: now,
       updated_at: now,
     })).select('share_token').single();
@@ -1049,12 +1144,164 @@ export async function createProject(input: { name: string; client?: string; desc
   return { id: data.id, name: data.name, client: data.client_name ?? '', description: data.description ?? '', status: data.status ?? 'active', shareToken: data.share_token ?? undefined, reviews: [] };
 }
 
-export async function loadSharedProject(shareToken: string): Promise<SharedProject | null> {
+const PROJECT_SHARE_TOKEN_PATTERN = /^[a-f0-9]{48}$/i;
+
+function generateProjectShareToken() {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Re-read the token before sharing and repair incomplete legacy values only. */
+export async function getProjectShareToken(projectId: string): Promise<string> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before sharing a project.');
+  const { data: project, error: readError } = await client.from('projects').select('share_token').eq('id', projectId).single();
+  if (readError || !project) throw new Error(`Could not prepare the project link: ${readError?.message ?? 'Project not found'}`);
+  if (typeof project.share_token === 'string' && PROJECT_SHARE_TOKEN_PATTERN.test(project.share_token)) return project.share_token;
+
+  const shareToken = generateProjectShareToken();
+  const { error: updateError } = await client.from('projects').update({ share_token: shareToken, sharing_enabled: true, updated_at: new Date().toISOString() }).eq('id', projectId);
+  if (updateError) throw new Error(`Could not repair the project link: ${updateError.message}`);
+  return shareToken;
+}
+
+export async function getActiveWorkUsage(): Promise<ActiveWorkUsage | null> {
+  if (!isSupabaseConfigured()) return null;
   const client = createSupabaseClientInstance();
   if (!client) return null;
-  const { data, error } = await client.rpc('get_shared_project', { p_share_token: shareToken });
+  const { data, error } = await client.rpc('get_active_work_usage');
+  if (error) throw new Error(`Failed to load active-work usage: ${error.message}`);
+  if (!data || typeof data !== 'object') return null;
+  const usage = data as Partial<ActiveWorkUsage>;
+  return {
+    activeProjects: Number(usage.activeProjects ?? 0),
+    activeStandaloneReviews: Number(usage.activeStandaloneReviews ?? 0),
+    totalActiveUnits: Number(usage.totalActiveUnits ?? 0),
+    limit: typeof usage.limit === 'number' ? usage.limit : null,
+    overLimit: Boolean(usage.overLimit),
+  };
+}
+
+export async function listProjectRequests(): Promise<ProjectRequestSummary[]> {
+  if (!isSupabaseConfigured()) return [];
+  const client = createSupabaseClientInstance();
+  if (!client) return [];
+  const { data: userData } = await client.auth.getUser();
+  if (!userData.user) return [];
+  const { data, error } = await client
+    .from('project_requests')
+    .select('id, project_id, title, brief, status, requested_by_name, linked_review_id, updated_at')
+    .order('updated_at', { ascending: false });
+  if (error) throw new Error(`Failed to load project requests: ${error.message}`);
+  return (data ?? []).map((request) => ({
+    id: request.id,
+    projectId: request.project_id,
+    title: request.title,
+    brief: request.brief,
+    status: request.status as ProjectRequestStatus,
+    requestedByName: request.requested_by_name,
+    linkedReviewId: request.linked_review_id ?? null,
+    updatedAt: request.updated_at,
+  }));
+}
+
+export async function updateProjectRequestStatus(requestId: string, status: ProjectRequestStatus): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before updating a request.');
+  const { error } = await client
+    .from('project_requests')
+    .update({ status, closed_at: ['closed', 'declined'].includes(status) ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+    .eq('id', requestId);
+  if (error) throw new Error(`Failed to update request: ${error.message}`);
+}
+
+export async function linkProjectRequestToReview(requestId: string, reviewId: string | null): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before linking a request.');
+  const { error } = await client
+    .from('project_requests')
+    .update({ linked_review_id: reviewId, updated_at: new Date().toISOString() })
+    .eq('id', requestId);
+  if (error) throw new Error(`Failed to link request: ${error.message}`);
+}
+
+export async function loadCreatorProjectRequest(requestId: string): Promise<CreatorProjectRequestDetail | null> {
+  const client = createSupabaseClientInstance();
+  if (!client) return null;
+  const [{ data: request, error }, { data: references }, { data: messages }] = await Promise.all([
+    client.from('project_requests').select('id, project_id, title, brief, status, requested_by_name, linked_review_id, updated_at').eq('id', requestId).single(),
+    client.from('project_request_references').select('id, reference_type, title, url, note, created_by_role, created_by_name').eq('request_id', requestId).order('sort_order'),
+    client.from('project_request_messages').select('id, author_role, author_name, body, created_at').eq('request_id', requestId).order('created_at'),
+  ]);
+  if (error || !request) return null;
+  return {
+    id: request.id, projectId: request.project_id, title: request.title, brief: request.brief, status: request.status as ProjectRequestStatus, requestedByName: request.requested_by_name, linkedReviewId: request.linked_review_id ?? null, updatedAt: request.updated_at,
+    references: (references ?? []).map((item) => ({ id: item.id, type: item.reference_type, title: item.title ?? null, url: item.url ?? null, note: item.note ?? null, createdByRole: item.created_by_role as 'client' | 'creator', createdByName: item.created_by_name ?? null })),
+    messages: (messages ?? []).map((item) => ({ id: item.id, authorRole: item.author_role as 'client' | 'creator', authorName: item.author_name, body: item.body, createdAt: item.created_at })),
+  };
+}
+
+export async function addCreatorProjectRequestMessage(input: { requestId: string; authorName: string; body: string }): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before replying.');
+  const { error } = await client.from('project_request_messages').insert({ id: newRequestId('creator-request-message'), request_id: input.requestId, author_role: 'creator', author_name: input.authorName.trim() || 'Creator', body: input.body.trim() });
+  if (error) throw new Error(`Failed to send reply: ${error.message}`);
+  const updateResult = await client.from('project_requests').update({ updated_at: new Date().toISOString() }).eq('id', input.requestId);
+  if (updateResult.error) throw new Error(`Failed to update request: ${updateResult.error.message}`);
+}
+
+export async function loadSharedProject(shareToken: string, accessCode?: string): Promise<SharedProject | null> {
+  const client = createSupabaseClientInstance();
+  if (!client) return null;
+  let { data, error } = await client.rpc('get_shared_project', { p_share_token: shareToken, p_access_code: accessCode ?? null });
+
+  // Older deployments may still expose the original one-argument Project RPC
+  // while PostgREST refreshes its function schema. It is safe only for an
+  // unprotected Project: access-code requests must never fall back.
+  if (error && !accessCode) {
+    const legacyResult = await client.rpc('get_shared_project', { p_share_token: shareToken });
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
+
   if (error || !data || typeof data !== 'object') return null;
   return data as SharedProject;
+}
+
+export async function setProjectAccessCode(projectId: string, accessCode: string): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before changing project access.');
+  const { error } = await client.rpc('set_project_access_code', { p_project_id: projectId, p_access_code: accessCode });
+  if (error) throw new Error(error.message);
+}
+
+export async function updateProjectSharingSettings(projectId: string, settings: { sharingEnabled: boolean; allowClientRequests: boolean; allowClientRequestReplies: boolean; allowClientRequestReferences: boolean }): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before changing project sharing.');
+  const { error } = await client.from('projects').update({ sharing_enabled: settings.sharingEnabled, allow_client_requests: settings.allowClientRequests, allow_client_request_replies: settings.allowClientRequestReplies, allow_client_request_references: settings.allowClientRequestReferences, updated_at: new Date().toISOString() }).eq('id', projectId);
+  if (error) throw new Error(error.message);
+}
+
+export async function setReviewLifecycle(reviewId: string, lifecycle: 'draft' | 'open' | 'closed' | 'archived'): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before changing review lifecycle.');
+  const { error } = await client.rpc('set_review_lifecycle', { p_review_id: reviewId, p_lifecycle: lifecycle });
+  if (error) throw new Error(error.message);
+}
+
+export async function setProjectLifecycle(projectId: string, lifecycle: 'active' | 'completed' | 'archived'): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before changing project lifecycle.');
+  const { error } = await client.rpc('set_project_lifecycle', { p_project_id: projectId, p_status: lifecycle });
+  if (error) throw new Error(error.message);
+}
+
+export async function setAssetVersionPublication(versionId: string, publication: 'draft' | 'published' | 'withdrawn'): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before changing Version publication.');
+  const { error } = await client.rpc('set_asset_version_publication', { p_version_id: versionId, p_publication: publication });
+  if (error) throw new Error(error.message);
 }
 
 export async function markReviewSeen(reviewId: string): Promise<void> {

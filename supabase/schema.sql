@@ -42,6 +42,32 @@ alter table public.projects add column if not exists description text not null d
 alter table public.projects add column if not exists status text not null default 'active';
 alter table public.projects add column if not exists share_token text unique default encode(gen_random_bytes(24), 'hex');
 alter table public.projects add column if not exists archived_at timestamptz;
+alter table public.projects add column if not exists last_activity_at timestamptz not null default now();
+alter table public.projects add column if not exists sharing_enabled boolean not null default true;
+alter table public.projects add column if not exists access_code_hash text;
+alter table public.projects add column if not exists access_code_version integer not null default 0;
+alter table public.projects add column if not exists allow_client_requests boolean not null default true;
+alter table public.projects add column if not exists allow_client_request_references boolean not null default true;
+alter table public.projects add column if not exists allow_client_request_replies boolean not null default true;
+
+create table if not exists public.project_requests (
+  id text primary key, project_id uuid not null references public.projects(id) on delete cascade,
+  title text not null, brief text not null, status text not null default 'new', requested_by_name text not null,
+  linked_review_id text references public.reviews(id) on delete set null, client_visible boolean not null default true,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(), closed_at timestamptz,
+  check (status in ('new','discussing','in_progress','ready_for_review','closed','declined'))
+);
+create table if not exists public.project_request_references (
+  id text primary key, request_id text not null references public.project_requests(id) on delete cascade,
+  reference_type text not null check (reference_type in ('image','pdf','link')), title text, url text, storage_path text,
+  mime_type text, note text, sort_order integer not null default 0, created_by_role text not null check (created_by_role in ('client','creator')),
+  created_by_name text, created_at timestamptz not null default now()
+);
+create table if not exists public.project_request_messages (
+  id text primary key, request_id text not null references public.project_requests(id) on delete cascade,
+  author_role text not null check (author_role in ('client','creator')), author_name text not null, body text not null,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now()
+);
 
 alter table public.reviews add column if not exists project_id uuid references public.projects(id) on delete set null;
 alter table public.reviews add column if not exists owner_id uuid references auth.users(id) on delete cascade;
@@ -62,6 +88,10 @@ alter table public.reviews add column if not exists allow_comments boolean not n
 alter table public.reviews add column if not exists allow_decisions boolean not null default true;
 alter table public.reviews add column if not exists content jsonb not null default '{}'::jsonb;
 alter table public.reviews add column if not exists creator_seen_at timestamptz;
+alter table public.reviews add column if not exists lifecycle text not null default 'draft';
+alter table public.reviews add column if not exists sharing_enabled boolean not null default true;
+alter table public.reviews add column if not exists allow_replies boolean not null default true;
+alter table public.reviews add column if not exists last_activity_at timestamptz not null default now();
 alter table public.reviews add column if not exists created_at timestamptz not null default now();
 alter table public.reviews add column if not exists updated_at timestamptz not null default now();
 
@@ -173,6 +203,10 @@ alter table public.asset_versions add column if not exists status text;
 alter table public.asset_versions add column if not exists metadata jsonb not null default '{}'::jsonb;
 alter table public.asset_versions add column if not exists created_at timestamptz not null default now();
 alter table public.asset_versions add column if not exists updated_at timestamptz not null default now();
+alter table public.asset_versions add column if not exists publication_status text not null default 'draft';
+alter table public.asset_versions add column if not exists published_at timestamptz;
+alter table public.asset_versions add column if not exists withdrawn_at timestamptz;
+alter table public.asset_versions add column if not exists review_round_id text;
 
 create index if not exists asset_versions_review_id_idx on public.asset_versions (review_id);
 create index if not exists asset_versions_asset_id_idx on public.asset_versions (asset_id);
@@ -864,6 +898,44 @@ grant execute on function public.get_shared_review_decision_context(text) to ano
 grant execute on function public.add_shared_comment(text, text, text, text, text, text, text, text, numeric, numeric, integer) to anon, authenticated;
 grant execute on function public.add_shared_feedback(text, text, text, text, text) to anon, authenticated;
 grant execute on function public.add_shared_decision(text, text, text, text, text, text, text, text) to anon, authenticated;
+
+create or replace function public.get_shared_project(p_share_token text)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare p public.projects%rowtype;
+begin
+  select * into p from public.projects where share_token = p_share_token and archived_at is null and sharing_enabled;
+  if not found then return null; end if;
+  return jsonb_build_object(
+    'title', p.name, 'client', coalesce(p.client_name, ''), 'description', p.description,
+    'reviews', coalesce((select jsonb_agg(jsonb_build_object('title', r.title, 'status', r.status, 'shareToken', r.share_token, 'updatedAt', r.updated_at, 'deliverableCount', (select count(*) from public.assets a where a.review_id = r.id), 'openCommentCount', (select count(*) from public.comments c where c.review_id = r.id and c.parent_comment_id is null and c.status = 'open')) order by r.updated_at desc) from public.reviews r where r.project_id = p.id and r.client_visible and r.status not in ('draft','archived')), '[]'::jsonb),
+    'requests', coalesce((select jsonb_agg(jsonb_build_object('id', q.id, 'title', q.title, 'status', q.status, 'requestedByName', q.requested_by_name, 'linkedReviewShareToken', r.share_token, 'updatedAt', q.updated_at, 'messageCount', (select count(*) from public.project_request_messages m where m.request_id = q.id)) order by q.updated_at desc) from public.project_requests q left join public.reviews r on r.id = q.linked_review_id where q.project_id = p.id and q.client_visible), '[]'::jsonb),
+    'allowClientRequests', p.allow_client_requests
+  );
+end; $$;
+
+create or replace function public.add_shared_project_request(p_share_token text, p_request_id text, p_reviewer_name text, p_title text, p_brief text)
+returns void language plpgsql security definer set search_path = public, pg_temp as $$
+declare p public.projects%rowtype;
+begin
+  select * into p from public.projects where share_token = p_share_token and archived_at is null and sharing_enabled and allow_client_requests;
+  if not found then raise exception 'This project is not available.'; end if;
+  if char_length(trim(p_title)) not between 1 and 160 or char_length(trim(p_brief)) not between 1 and 5000 then raise exception 'Invalid request.'; end if;
+  insert into public.project_requests(id, project_id, title, brief, requested_by_name) values (p_request_id, p.id, trim(p_title), trim(p_brief), nullif(trim(p_reviewer_name), ''));
+end; $$;
+
+alter table public.project_requests enable row level security;
+alter table public.project_request_references enable row level security;
+alter table public.project_request_messages enable row level security;
+
+drop policy if exists "Creators manage project requests" on public.project_requests;
+create policy "Creators manage project requests" on public.project_requests for all using (exists (select 1 from public.projects p where p.id = project_requests.project_id and p.owner_id = auth.uid())) with check (exists (select 1 from public.projects p where p.id = project_requests.project_id and p.owner_id = auth.uid()));
+drop policy if exists "Creators manage project request references" on public.project_request_references;
+create policy "Creators manage project request references" on public.project_request_references for all using (exists (select 1 from public.project_requests q join public.projects p on p.id = q.project_id where q.id = project_request_references.request_id and p.owner_id = auth.uid())) with check (exists (select 1 from public.project_requests q join public.projects p on p.id = q.project_id where q.id = project_request_references.request_id and p.owner_id = auth.uid()));
+drop policy if exists "Creators manage project request messages" on public.project_request_messages;
+create policy "Creators manage project request messages" on public.project_request_messages for all using (exists (select 1 from public.project_requests q join public.projects p on p.id = q.project_id where q.id = project_request_messages.request_id and p.owner_id = auth.uid())) with check (exists (select 1 from public.project_requests q join public.projects p on p.id = q.project_id where q.id = project_request_messages.request_id and p.owner_id = auth.uid()));
+
+grant execute on function public.get_shared_project(text) to anon, authenticated;
+grant execute on function public.add_shared_project_request(text, text, text, text, text) to anon, authenticated;
 
 drop policy if exists "Prototype can create shared reviews" on public.reviews;
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { createSupabaseClientInstance } from '@/lib/supabase';
 
@@ -140,6 +141,7 @@ export function AuthModal({ embeddedMode, defaultNext = '/dashboard' }: AuthModa
           {isSending ? 'Sending...' : authAction(mode)}
         </button>
         {message ? <p className="mt-3 text-sm leading-6 text-text-muted">{message}</p> : null}
+        {mode === 'login' ? <p className="mt-3 text-right text-sm"><Link href="/reset-password" className="font-semibold text-brand hover:text-brand-strong">Forgot password?</Link></p> : null}
         <p className="mt-4 text-center text-sm text-text-muted">
           {mode === 'signup' ? 'Already have an account?' : 'New to WizerView?'}{' '}
           <button type="button" onClick={() => switchMode(mode === 'signup' ? 'login' : 'signup')} className="font-semibold text-brand hover:text-brand-strong">

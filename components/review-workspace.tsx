@@ -10,7 +10,7 @@ import { AssetSurface } from '@/components/asset-surface';
 import { BrandLogo } from '@/components/brand-logo';
 import { FeedbackPanel } from '@/components/feedback-panel';
 import { PinCommentLayer } from '@/components/pin-comment-layer';
-import { processImagePreview, processPdfPreview } from '@/lib/asset-processing';
+import { processImagePreview, processPdfPreview, type PdfPagePreview } from '@/lib/asset-processing';
 import type { AssetVersion, Comment, DecisionOutcome, ReviewAsset, ReviewData, ShareSettings } from '@/lib/mock-data';
 import {
   createEmptyReviewData,
@@ -42,6 +42,7 @@ interface ReviewWorkspaceProps {
 }
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const zoomOptions = [{ value: 'fit', scale: 1, label: 'Fit' }, { value: '50', scale: 0.5, label: '50%' }, { value: '75', scale: 0.75, label: '75%' }, { value: '100', scale: 1, label: '100%' }, { value: '125', scale: 1.25, label: '125%' }, { value: '150', scale: 1.5, label: '150%' }] as const;
 
 function versionLabel(index: number) {
   return `Version ${alphabet[index] ?? index + 1}`;
@@ -91,6 +92,11 @@ function collectObjectUrls(review: ReviewData) {
   );
 }
 
+function getPdfPages(version?: AssetVersion): PdfPagePreview[] {
+  const pages = version?.metadata?.pdfPages;
+  return Array.isArray(pages) ? pages.filter((page): page is PdfPagePreview => Boolean(page) && typeof page === 'object' && 'pageNumber' in page && 'previewUrl' in page) : [];
+}
+
 function commentMatchesAssetVersion(comment: Comment, asset?: ReviewAsset, version?: AssetVersion) {
   if (!asset || comment.assetId !== asset.id) return false;
   if (!version) return false;
@@ -115,6 +121,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const [activeVersionId, setActiveVersionId] = useState(fallbackReview.assets[0]?.versions[0]?.id ?? '');
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [activePdfPage, setActivePdfPage] = useState(1);
+  const [previewZoom, setPreviewZoom] = useState<(typeof zoomOptions)[number]['value']>('fit');
   const [rightTab, setRightTab] = useState<'notes' | 'feedback'>('notes');
   const [commentFilter, setCommentFilter] = useState<'all' | 'open' | 'resolved'>('all');
   const [originFilter, setOriginFilter] = useState<'all' | 'client' | 'creator'>('all');
@@ -138,6 +145,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const [briefDraft, setBriefDraft] = useState(fallbackReview.brief);
   const [isDropTargetActive, setIsDropTargetActive] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [isPdfProcessing, setIsPdfProcessing] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isReviewLoaded, setIsReviewLoaded] = useState(false);
@@ -155,6 +163,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     y: number;
     text: string;
     author: string;
+    pageNumber?: number;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const versionNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -166,6 +175,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const commentCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const savedReviewSignatureRef = useRef(getReviewSaveSignature(fallbackReview));
   const objectUrlsRef = useRef<Set<string>>(new Set());
+  const pdfAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!isCreator || !supabase) {
@@ -294,6 +304,19 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
 
   const activeAsset = review.assets.find((asset) => asset.id === activeAssetId) ?? review.assets[0];
   const activeVersion = activeAsset?.versions.find((version) => version.id === activeVersionId) ?? activeAsset?.versions[0];
+  const activePdfPagePreview = getPdfPages(activeVersion).find((page) => page.pageNumber === activePdfPage);
+  const previewScale = zoomOptions.find((option) => option.value === previewZoom)?.scale ?? 1;
+  const displayVersion = activePdfPagePreview && activeVersion ? {
+    ...activeVersion,
+    previewUrl: activePdfPagePreview.previewUrl,
+    thumbnailUrl: activePdfPagePreview.thumbnailUrl,
+    previewBytes: activePdfPagePreview.previewBytes,
+    storagePath: activePdfPagePreview.storagePath,
+    thumbnailStoragePath: activePdfPagePreview.thumbnailStoragePath,
+    width: activePdfPagePreview.width,
+    height: activePdfPagePreview.height,
+    pageNumber: activePdfPagePreview.pageNumber,
+  } : activeVersion;
   const topLevelComments = review.comments.filter((comment) => !comment.parentCommentId);
   const assetComments = topLevelComments.filter((comment) => commentMatchesAssetVersion(comment, activeAsset, activeVersion));
   const filteredAssetComments = assetComments.filter((comment) => {
@@ -550,7 +573,15 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     setUploadMessage(`Uploading ${file.name}...`);
 
     try {
-      const processed = file.type === 'application/pdf' ? await processPdfPreview(file) : await processImagePreview(file);
+      const controller = file.type === 'application/pdf' ? new AbortController() : null;
+      pdfAbortControllerRef.current = controller;
+      setIsPdfProcessing(Boolean(controller));
+      const processed = file.type === 'application/pdf'
+        ? await processPdfPreview(file, {
+            signal: controller?.signal,
+            onProgress: ({ completedPages, totalPages }) => setUploadMessage(`Rendering PDF page ${completedPages} of ${totalPages}…`),
+          })
+        : await processImagePreview(file);
       const nextVersion: AssetVersion = {
         ...pendingVersion,
         status: 'ready',
@@ -568,6 +599,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         height: processed.height,
         pageCount: processed.pageCount,
         pageNumber: 1,
+        metadata: 'pages' in processed ? { ...pendingVersion.metadata, pdfPages: processed.pages } : pendingVersion.metadata,
         storageHint: processed.storageHint,
       };
 
@@ -586,9 +618,11 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             : asset
         ),
       }));
-      setUploadMessage(`Original ${formatByteSize(processed.originalBytes)} -> Preview ${formatByteSize(processed.previewBytes)} ${processed.previewMimeType.toUpperCase()}`);
+      setUploadMessage('pages' in processed
+        ? `${processed.pageCount} PDF page previews are ready. The original PDF was not uploaded.`
+        : `Original ${formatByteSize(processed.originalBytes)} -> Preview ${formatByteSize(processed.previewBytes)} ${processed.previewMimeType.toUpperCase()}`);
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Processing failed.';
+      const reason = error instanceof DOMException && error.name === 'AbortError' ? 'PDF processing cancelled.' : error instanceof Error ? error.message : 'Processing failed.';
       setReview((current) => ({
         ...current,
         assets: current.assets.map((asset) =>
@@ -602,6 +636,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         ),
       }));
       setUploadMessage(reason);
+    } finally {
+      pdfAbortControllerRef.current = null;
+      setIsPdfProcessing(false);
     }
   };
 
@@ -835,14 +872,14 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     setIsFeedbackDrawerOpen(true);
   };
 
-  const handleAddComment = (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string) => {
+  const handleAddComment = (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string, pageNumber?: number) => {
     if (!isCreator && !review.shareSettings.allowComments) {
       setSaveMessage('Comments are disabled for this review.');
       return;
     }
 
     if (!requireName()) {
-      setPendingComment({ assetId, assetVersionId, x, y, text, author });
+      setPendingComment({ assetId, assetVersionId, x, y, text, author, pageNumber });
       return;
     }
 
@@ -851,6 +888,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       reviewId: review.id,
       assetId,
       assetVersionId,
+      pageNumber,
       x,
       y,
       text,
@@ -920,9 +958,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     setShowIdentityModal(false);
 
     if (pendingComment) {
-      const { assetId, assetVersionId, x, y, text, author } = pendingComment;
+      const { assetId, assetVersionId, x, y, text, author, pageNumber } = pendingComment;
       setPendingComment(null);
-      handleAddComment(assetId, assetVersionId, x, y, text, author);
+      handleAddComment(assetId, assetVersionId, x, y, text, author, pageNumber);
     }
   };
 
@@ -1410,6 +1448,10 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     </div>
   );
 
+  if (!isCreator && isReviewLoaded && review.id === 'shared-review-unavailable') {
+    return <main className="flex min-h-screen items-center justify-center bg-canvas px-4 text-text"><section className="w-full max-w-md rounded-[14px] border border-border bg-surface p-6 text-center shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-text-subtle">WizerView</p><h1 className="mt-3 text-xl font-semibold">This review is unavailable</h1><p className="mt-2 text-sm leading-6 text-text-muted">It may be a draft, closed to sharing, archived, or the link may be incorrect. Ask the creator for an updated link.</p><p className="mt-5 text-xs text-text-subtle">Reference: review-link-unavailable</p></section></main>;
+  }
+
   return (
     <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-canvas text-text">
       {isCreator && isSettingsDialogOpen ? <div className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/45 px-4" onMouseDown={() => setIsSettingsDialogOpen(false)}><section role="dialog" aria-modal="true" aria-label="Review settings" onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-sm rounded-[14px] bg-white p-5 shadow-2xl"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold">Review settings</h2><button type="button" onClick={() => setIsSettingsDialogOpen(false)} aria-label="Close settings"><FiX /></button></div><label className="mt-4 block text-sm font-semibold">Review goal<select value={review.reviewGoal} onChange={(event) => setReview((current) => ({ ...current, reviewGoal: event.target.value as typeof current.reviewGoal }))} className="mt-2 w-full rounded-[8px] border border-stone-200 px-3 py-2 font-normal"><option value="approve_final">Approve final work</option><option value="select_version">Choose a preferred version</option><option value="feedback_only">Feedback only</option></select></label><div className="mt-4 space-y-2">{([{ key: 'reviewerNameRequired', label: 'Require reviewer name' }, { key: 'allowComments', label: 'Allow comments' }, { key: 'allowDecisions', label: 'Allow decisions' }] as const).map((setting) => <label key={setting.key} className="flex items-center justify-between rounded-[8px] bg-stone-50 px-3 py-2"><span>{setting.label}</span><input type="checkbox" checked={review.shareSettings[setting.key]} onChange={(event) => updateShareSetting(setting.key, event.target.checked)} /></label>)}<label className="flex items-center justify-between rounded-[8px] bg-stone-50 px-3 py-2"><span>Visible in shared project</span><input type="checkbox" checked={review.clientVisible} onChange={(event) => setReview((current) => ({ ...current, clientVisible: event.target.checked }))} /></label></div></section></div> : null}
@@ -1575,6 +1617,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               ) : null}
             </div>
             <div className="relative flex flex-wrap items-center gap-2">
+              {activeVersionHasPreview ? <label className="flex items-center gap-2 rounded-[8px] border border-stone-200 bg-white px-2 py-1 text-xs font-semibold text-stone-700">Zoom<select value={previewZoom} onChange={(event) => setPreviewZoom(event.target.value as typeof previewZoom)} className="bg-transparent py-1 text-sm font-semibold outline-none">{zoomOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label> : null}
               {!isCreator && hasMultipleVersions ? (
                 <button type="button" onClick={handleSelectVersion} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">Select this version</button>
               ) : null}
@@ -1663,14 +1706,16 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                   ) : (
                     <AssetSurface
                       asset={activeAsset}
-                      version={activeVersion}
+                      version={displayVersion}
                       scrollContainerRef={previewScrollRef}
+                      zoom={previewScale}
                       overlay={activeVersionHasPreview && showPins && (isCreator || review.shareSettings.allowComments) ? (
                         <PinCommentLayer
                           asset={activeAsset}
                           version={activeVersion}
                           comments={review.comments}
                           onAddComment={handleAddComment}
+                          pageNumber={activeAsset.assetType === 'pdf' ? activePdfPage : undefined}
                           activeCommentId={activeCommentId}
                           onSelectComment={(commentId) => {
                             setActiveCommentId(commentId);
@@ -1700,6 +1745,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                 ))}
               </div>
             ) : null}
+            {isPdfProcessing ? <button type="button" onClick={() => pdfAbortControllerRef.current?.abort()} className="mt-3 rounded-[8px] border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700">Cancel PDF processing</button> : null}
             {renderOutcomePanel()}
           </div>
         </section>
