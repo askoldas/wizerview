@@ -1,18 +1,57 @@
 "use client";
 
 import Link from 'next/link';
-import { useState } from 'react';
-import { setProjectAccessCode, updateProjectSharingSettings } from '@/lib/review-service';
+import { useCallback, useEffect, useState } from 'react';
+import { inviteProjectClient, loadProjectClientAccess, revokeProjectClientAccess, type ProjectClientAccessRecord } from '@/lib/review-service';
 
 export function ProjectSharingSettings({ projectId }: { projectId: string }) {
-  const [code, setCode] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [access, setAccess] = useState<ProjectClientAccessRecord[]>([]);
   const [message, setMessage] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [sharingEnabled, setSharingEnabled] = useState(true);
-  const [allowRequests, setAllowRequests] = useState(true);
-  const [allowReplies, setAllowReplies] = useState(true);
-  const [allowReferences, setAllowReferences] = useState(true);
-  const save = async () => { setSaving(true); setMessage(null); try { await setProjectAccessCode(projectId, code); setCode(''); setMessage(code.trim() ? 'Access code saved. Share it separately from the project link.' : 'Access code removed.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not update access code.'); } finally { setSaving(false); } };
-  const savePermissions = async () => { setSaving(true); setMessage(null); try { await updateProjectSharingSettings(projectId, { sharingEnabled, allowClientRequests: allowRequests, allowClientRequestReplies: allowReplies, allowClientRequestReferences: allowReferences }); setMessage('Sharing controls saved.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not update sharing.'); } finally { setSaving(false); } };
-  return <main className="min-h-screen bg-canvas px-4 py-6 text-text lg:px-8"><header className="border-b border-border pb-5"><Link href="/dashboard" className="text-sm font-semibold text-text-muted">← Projects</Link><p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-text-subtle">Project sharing</p><h1 className="mt-2 text-3xl font-semibold">Sharing controls</h1><p className="mt-2 max-w-xl text-sm leading-6 text-text-muted">Control what clients can access from the project link.</p></header><section className="mt-5 max-w-xl rounded-lg border border-border bg-surface p-4"><h2 className="font-semibold">Client access</h2><div className="mt-3 space-y-3 text-sm"><label className="flex gap-2"><input type="checkbox" checked={sharingEnabled} onChange={(event) => setSharingEnabled(event.target.checked)}/> Enable project link</label><label className="flex gap-2"><input type="checkbox" checked={allowRequests} onChange={(event) => setAllowRequests(event.target.checked)}/> Allow client Requests</label><label className="flex gap-2"><input type="checkbox" checked={allowReplies} onChange={(event) => setAllowReplies(event.target.checked)}/> Allow Request replies</label><label className="flex gap-2"><input type="checkbox" checked={allowReferences} onChange={(event) => setAllowReferences(event.target.checked)}/> Allow Request references</label></div><button disabled={saving} type="button" onClick={() => void savePermissions()} className="mt-4 rounded-md border border-border px-3 py-2 text-sm font-semibold disabled:opacity-50">Save sharing controls</button></section><section className="mt-5 max-w-xl rounded-lg border border-border bg-surface p-4"><h2 className="font-semibold">Access code</h2><form onSubmit={(event) => { event.preventDefault(); void save(); }} className="mt-3"><label className="block text-sm font-semibold">New access code<input type="password" minLength={6} value={code} onChange={(event) => setCode(event.target.value)} placeholder="Leave blank to remove protection" className="mt-2 w-full rounded-md border border-border px-3 py-2 font-normal" /></label><p className="mt-2 text-xs text-text-muted">Use at least six characters. The code is stored only as a secure hash.</p><button disabled={saving} className="mt-4 rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save access code'}</button></form>{message ? <p className="mt-3 text-sm text-text-muted" role="status">{message}</p> : null}</section></main>;
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const refreshAccess = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      setAccess(await loadProjectClientAccess(projectId));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not load client access.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => { void refreshAccess(); }, [refreshAccess]);
+
+  const invite = async () => {
+    setIsSaving(true);
+    setMessage(null);
+    try {
+      await inviteProjectClient(projectId, inviteEmail);
+      setInviteEmail('');
+      setMessage('Invitation email sent. The client will join this Project after accepting it.');
+      await refreshAccess();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not send the invitation.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const revoke = async (record: ProjectClientAccessRecord) => {
+    setIsSaving(true);
+    setMessage(null);
+    try {
+      await revokeProjectClientAccess(record);
+      setMessage(record.status === 'active' ? 'Client access removed.' : 'Invitation revoked.');
+      await refreshAccess();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not change client access.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return <main className="min-h-screen bg-canvas px-4 py-6 text-text lg:px-8"><header className="border-b border-border pb-5"><Link href="/dashboard" className="text-sm font-semibold text-text-muted">← Projects</Link><p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-text-subtle">Client access</p><h1 className="mt-2 text-3xl font-semibold">Invite clients to this Project</h1><p className="mt-2 max-w-xl text-sm leading-6 text-text-muted">Project access is account-based. Invite clients by email; they receive a secure passwordless sign-in link and use the client portal.</p></header><section className="mt-5 max-w-xl rounded-lg border border-border bg-surface p-4"><h2 className="font-semibold">Invite a client</h2><form onSubmit={(event) => { event.preventDefault(); void invite(); }} className="mt-3 flex gap-2"><input type="email" required value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="client@company.com" className="min-w-0 flex-1 rounded-md border border-border px-3 py-2 text-sm"/><button disabled={isSaving} className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">Send invite</button></form>{message ? <p className="mt-3 text-sm text-text-muted" role="status">{message}</p> : null}</section><section className="mt-5 max-w-xl rounded-lg border border-border bg-surface p-4"><div className="flex items-center justify-between gap-3"><div><h2 className="font-semibold">Client access</h2><p className="mt-1 text-sm text-text-muted">Active members can view this Project and its visible Reviews.</p></div><button type="button" onClick={() => void refreshAccess()} className="text-sm font-semibold text-brand">Refresh</button></div>{isLoading ? <p className="mt-4 text-sm text-text-muted">Loading access…</p> : access.length ? <ul className="mt-4 divide-y divide-border">{access.map((record) => <li key={record.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><p className="font-medium">{record.displayName || record.email}</p><p className="mt-1 text-sm text-text-muted">{record.displayName ? record.email : null} · {record.status === 'active' ? 'Active client' : 'Invitation pending'}</p></div><button disabled={isSaving} type="button" onClick={() => void revoke(record)} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted disabled:opacity-50">{record.status === 'active' ? 'Remove access' : 'Revoke invite'}</button></li>)}</ul> : <p className="mt-4 text-sm text-text-muted">No clients have access yet.</p>}</section></main>;
 }

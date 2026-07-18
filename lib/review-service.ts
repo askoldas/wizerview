@@ -62,6 +62,7 @@ export interface CreatorProjectRequestDetail extends ProjectRequestSummary {
 
 export interface SharedProject {
   requiresAccessCode?: boolean;
+  requiresAuthentication?: boolean;
   title: string;
   client: string;
   description: string;
@@ -89,6 +90,18 @@ export interface SharedProjectRequest {
 
 function newRequestId(prefix: string) {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${prefix}-${Date.now()}`;
+}
+
+async function saveSharedReviewInteraction(input: Record<string, unknown>) {
+  const response = await fetch('/api/review-interactions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(payload?.error ?? 'Could not save this review interaction.');
+  }
 }
 
 export async function loadSharedProjectRequest(shareToken: string, requestId: string, accessCode?: string): Promise<SharedProjectRequest | null> {
@@ -836,7 +849,7 @@ function normalizeSharedReviewPayload(payload: unknown, shareToken: string): Rev
 
 async function loadSharedReviewPayload(client: NonNullable<ReturnType<typeof createSupabaseClientInstance>>, shareToken: string) {
   const [{ data, error }, contextResult] = await Promise.all([
-    client.rpc('get_shared_review_secure', { p_share_token: shareToken }),
+    client.rpc('get_shared_review_secure', { p_share_token: shareToken, p_access_code: null }),
     client.rpc('get_shared_review_decision_context', { p_share_token: shareToken }),
   ]);
 
@@ -1164,6 +1177,64 @@ export async function getProjectShareToken(projectId: string): Promise<string> {
   const { error: updateError } = await client.from('projects').update({ share_token: shareToken, sharing_enabled: true, updated_at: new Date().toISOString() }).eq('id', projectId);
   if (updateError) throw new Error(`Could not repair the project link: ${updateError.message}`);
   return shareToken;
+}
+
+function createInvitationToken() {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** Creates a hashed invitation record, then asks Supabase Auth to send its magic link. */
+export async function inviteProjectClient(projectId: string, email: string): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before inviting a client.');
+  const token = createInvitationToken();
+  const { error: invitationError } = await client.rpc('create_project_client_invitation', { p_project_id: projectId, p_email: email.trim(), p_raw_token: token });
+  if (invitationError) throw new Error(invitationError.message);
+  const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(`/client/invitations/${token}`)}`;
+  const { error: emailError } = await client.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: redirectTo, shouldCreateUser: true } });
+  if (emailError) throw new Error(`Invitation created, but the email could not be sent: ${emailError.message}`);
+}
+
+export interface ProjectClientAccessRecord {
+  id: string;
+  email: string;
+  status: 'pending' | 'active';
+  displayName?: string | null;
+  createdAt: string;
+}
+
+export async function loadProjectClientAccess(projectId: string): Promise<ProjectClientAccessRecord[]> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before viewing client access.');
+  const [{ data: memberships, error: membershipError }, { data: invitations, error: invitationError }] = await Promise.all([
+    client.from('project_client_memberships').select('id, user_id, invited_email, accepted_at, created_at').eq('project_id', projectId).eq('status', 'active').order('accepted_at', { ascending: false }),
+    client.from('project_client_invitations').select('id, email_normalized, created_at').eq('project_id', projectId).eq('status', 'pending').order('created_at', { ascending: false }),
+  ]);
+  if (membershipError) throw new Error(membershipError.message);
+  if (invitationError) throw new Error(invitationError.message);
+
+  const userIds = (memberships ?? []).map((membership) => membership.user_id);
+  const { data: profiles, error: profileError } = userIds.length
+    ? await client.from('profiles').select('user_id, display_name').in('user_id', userIds)
+    : { data: [], error: null };
+  if (profileError) throw new Error(profileError.message);
+  const names = new Map((profiles ?? []).map((profile) => [profile.user_id, profile.display_name]));
+
+  return [
+    ...(memberships ?? []).map((membership) => ({ id: membership.id, email: membership.invited_email ?? 'Client account', status: 'active' as const, displayName: names.get(membership.user_id) ?? null, createdAt: membership.accepted_at ?? membership.created_at })),
+    ...(invitations ?? []).map((invitation) => ({ id: invitation.id, email: invitation.email_normalized, status: 'pending' as const, createdAt: invitation.created_at })),
+  ];
+}
+
+export async function revokeProjectClientAccess(input: { id: string; status: 'pending' | 'active' }): Promise<void> {
+  const client = createSupabaseClientInstance();
+  if (!client) throw new Error('Connect Supabase before changing client access.');
+  const rpc = input.status === 'active' ? 'revoke_project_client_membership' : 'revoke_project_client_invitation';
+  const parameter = input.status === 'active' ? { p_membership_id: input.id } : { p_invitation_id: input.id };
+  const { error } = await client.rpc(rpc, parameter);
+  if (error) throw new Error(error.message);
 }
 
 export async function getActiveWorkUsage(): Promise<ActiveWorkUsage | null> {
@@ -1567,25 +1638,7 @@ export async function saveComment(review: ReviewData, comment: Comment): Promise
   };
 
   if (review.shareToken && (comment.authorRole ?? 'reviewer') === 'reviewer') {
-    const { error } = await client.rpc('add_shared_comment', {
-      p_share_token: review.shareToken,
-      p_comment_id: comment.id,
-      p_review_id: review.id,
-      p_asset_id: comment.assetId,
-      p_asset_version_id: assetVersionId,
-      p_parent_comment_id: null,
-      p_author_name: comment.author,
-      p_body: comment.text,
-      p_x_percent: comment.x ?? null,
-      p_y_percent: comment.y ?? null,
-      p_page_number: comment.pageNumber ?? null,
-    });
-
-    if (error) {
-      console.error('Failed to save shared comment to Supabase:', error.message);
-      throw new Error(`Failed to save comment: ${error.message}`);
-    }
-
+    await saveSharedReviewInteraction({ interaction: 'comment', shareToken: review.shareToken, reviewId: review.id, id: comment.id, assetId: comment.assetId, assetVersionId, parentCommentId: null, reviewerName: comment.author, body: comment.text, x: comment.x ?? null, y: comment.y ?? null, pageNumber: comment.pageNumber ?? null });
     return;
   }
 
@@ -1648,25 +1701,7 @@ export async function saveCommentReply(input: CommentReplyInput): Promise<Commen
   };
 
   if (input.review.shareToken && input.authorRole === 'reviewer') {
-    const { error } = await client.rpc('add_shared_comment', {
-      p_share_token: input.review.shareToken,
-      p_comment_id: reply.id,
-      p_review_id: input.review.id,
-      p_asset_id: reply.assetId,
-      p_asset_version_id: reply.assetVersionId ?? null,
-      p_parent_comment_id: input.parentCommentId,
-      p_author_name: input.authorName,
-      p_body: input.body,
-      p_x_percent: null,
-      p_y_percent: null,
-      p_page_number: null,
-    });
-
-    if (error) {
-      console.error('Failed to save shared reply to Supabase:', error.message);
-      throw new Error(`Failed to save reply: ${error.message}`);
-    }
-
+    await saveSharedReviewInteraction({ interaction: 'comment', shareToken: input.review.shareToken, reviewId: input.review.id, id: reply.id, assetId: reply.assetId, assetVersionId: reply.assetVersionId ?? null, parentCommentId: input.parentCommentId, reviewerName: input.authorName, body: input.body, x: null, y: null, pageNumber: null });
     return reply;
   }
 
@@ -1753,19 +1788,7 @@ export async function saveReviewerFeedback(input: ReviewerFeedbackInput): Promis
     : `feedback-${Date.now()}`;
 
   if (input.shareToken) {
-    const { error } = await client.rpc('add_shared_feedback', {
-      p_share_token: input.shareToken,
-      p_feedback_id: feedbackId,
-      p_review_id: input.reviewId,
-      p_reviewer_name: input.reviewerName,
-      p_body: input.body,
-    });
-
-    if (error) {
-      console.error('Failed to save shared feedback to Supabase:', error.message);
-      throw new Error(`Failed to save feedback: ${error.message}`);
-    }
-
+    await saveSharedReviewInteraction({ interaction: 'feedback', shareToken: input.shareToken, reviewId: input.reviewId, id: feedbackId, reviewerName: input.reviewerName, body: input.body });
     return;
   }
 
@@ -1808,22 +1831,7 @@ export async function saveReviewerDecision(input: ReviewerDecisionInput): Promis
   };
 
   if (input.shareToken) {
-    const { error } = await client.rpc('add_shared_decision', {
-      p_share_token: input.shareToken,
-      p_decision_id: decisionId,
-      p_review_id: input.reviewId,
-      p_asset_id: input.assetId,
-      p_asset_version_id: input.assetVersionId ?? null,
-      p_reviewer_name: input.reviewerName,
-      p_type: input.type,
-      p_note: input.note,
-    });
-
-    if (error) {
-      console.error('Failed to save shared decision to Supabase:', error.message);
-      throw new Error(`Failed to save decision: ${error.message}`);
-    }
-
+    await saveSharedReviewInteraction({ interaction: 'decision', shareToken: input.shareToken, reviewId: input.reviewId, id: decisionId, assetId: input.assetId, assetVersionId: input.assetVersionId ?? null, reviewerName: input.reviewerName, type: input.type, note: input.note });
     return;
   }
 

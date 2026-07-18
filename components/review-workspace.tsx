@@ -39,6 +39,7 @@ interface ReviewWorkspaceProps {
   reviewId?: string;
   shareToken?: string;
   initialReview?: ReviewData;
+  authenticatedReviewer?: { displayName: string; email: string; projectHref?: string };
 }
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -108,7 +109,7 @@ function commentMatchesAssetVersion(comment: Comment, asset?: ReviewAsset, versi
   return asset.versions.length <= 1 && !comment.assetVersionId && !comment.optionId;
 }
 
-export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: ReviewWorkspaceProps) {
+export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, authenticatedReviewer }: ReviewWorkspaceProps) {
   const isCreator = mode === 'creator';
   const router = useRouter();
   const pathname = usePathname();
@@ -152,7 +153,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(isCreator && Boolean(supabase));
   const [hasMarkedSeen, setHasMarkedSeen] = useState(false);
-  const [reviewerName, setReviewerName] = useState('');
+  const [reviewerName, setReviewerName] = useState(authenticatedReviewer?.displayName ?? '');
   const [decisionNote, setDecisionNote] = useState('');
   const [pendingDecisionType, setPendingDecisionType] = useState<ReviewerDecisionType | null>(null);
   const [showIdentityModal, setShowIdentityModal] = useState(false);
@@ -429,8 +430,16 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     });
   }, [authUser, hasMarkedSeen, isCreator, isReviewLoaded, review.id]);
 
+  useEffect(() => {
+    if (isCreator || authenticatedReviewer || !shareToken || reviewerName) return;
+    fetch(`/api/guest-session?shareToken=${encodeURIComponent(shareToken)}`).then((response) => response.ok ? response.json() : null).then((data) => {
+      if (data?.displayName) setReviewerName(data.displayName);
+    }).catch(() => undefined);
+  }, [authenticatedReviewer, isCreator, reviewerName, shareToken]);
+
   const requireName = () => {
     if (isCreator) return true;
+    if (authenticatedReviewer) return true;
     if (!review.shareSettings.reviewerNameRequired) return true;
     if (!reviewerName.trim()) {
       setShowIdentityModal(true);
@@ -953,8 +962,12 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     }
   };
 
-  const handleNameSubmit = () => {
+  const handleNameSubmit = async () => {
     if (!reviewerName.trim()) return;
+    if (!isCreator && !authenticatedReviewer && shareToken) {
+      const response = await fetch('/api/guest-session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ shareToken, displayName: reviewerName.trim() }) });
+      if (!response.ok) setSaveMessage('Your name will apply to this review only.');
+    }
     setShowIdentityModal(false);
 
     if (pendingComment) {
@@ -1492,7 +1505,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               placeholder="Alex Morgan"
               className="mt-2 w-full rounded-md border border-border bg-surface-muted px-3 py-2.5 text-sm"
             />
-            <button type="button" onClick={handleNameSubmit} className="mt-5 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
+            <button type="button" onClick={() => void handleNameSubmit()} className="mt-5 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
               Continue to review
             </button>
           </div>
@@ -1502,7 +1515,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       <header className="z-30 flex-none border-b border-border bg-surface/95 px-4 py-3 backdrop-blur lg:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
-            {isCreator ? <BrandLogo href="/dashboard" /> : null}
+            {isCreator ? <BrandLogo href="/dashboard" /> : authenticatedReviewer?.projectHref ? <Link href={authenticatedReviewer.projectHref} className="text-sm font-semibold text-text-muted">← Project</Link> : null}
             <span className="h-5 w-px bg-border" />
             <span className="text-xs font-semibold uppercase tracking-[0.22em] text-text-subtle">{isCreator ? 'Creator workspace' : 'Client review'}</span>
             <h1 className="min-w-0 text-sm font-semibold text-text sm:text-base">{review.title}</h1>
@@ -1521,8 +1534,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               </>
             ) : (
               <>
-                <div className="rounded-md bg-surface-muted px-3 py-2 text-sm text-text-muted">{review.client || 'Client'}</div>
-                <input value={reviewerName} onChange={(event) => setReviewerName(event.target.value)} placeholder="Your name" className="w-40 rounded-md border border-border bg-surface px-3 py-2 text-sm" />
+                <div className="rounded-md bg-surface-muted px-3 py-2 text-sm text-text-muted">{authenticatedReviewer ? `Reviewing as ${authenticatedReviewer.displayName || authenticatedReviewer.email}` : review.client || 'Client'}</div>
+                {!authenticatedReviewer ? <input value={reviewerName} onChange={(event) => setReviewerName(event.target.value)} placeholder="Your name" className="w-40 rounded-md border border-border bg-surface px-3 py-2 text-sm" /> : null}
                 {renderShareMenu()}
               </>
             )}

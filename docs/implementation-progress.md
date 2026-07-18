@@ -244,3 +244,10 @@ Validated:
 
 Blocking decision:
 - Approve a planned Next.js upgrade/remediation path before production release.
+# Client portal refactor progress
+
+- Cookie-backed Supabase SSR clients, middleware refresh, and secure auth callback are implemented.
+- Profiles, invitation acceptance, active Project memberships, and `/client` portal routes are implemented.
+- Client Project, Review redirect, and Request routes use server-side session resolution plus membership RLS.
+- Legacy Project bearer links are a compatibility surface; new client Requests, messages, and reference links require active membership.
+- Authorship schema records immutable name snapshots and authenticated user references while preserving legacy names.

@@ -20,6 +20,10 @@ function authAction(mode: AuthMode) {
   return mode === 'signup' ? 'Create account' : 'Sign in';
 }
 
+function safeInternalPath(value: string) {
+  return value.startsWith('/') && !value.startsWith('//') ? value : '/dashboard';
+}
+
 export function AuthModal({ embeddedMode, defaultNext = '/dashboard' }: AuthModalProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -28,7 +32,7 @@ export function AuthModal({ embeddedMode, defaultNext = '/dashboard' }: AuthModa
   const queryMode = searchParams.get('auth');
   const requestedMode = embeddedMode ?? (queryMode === 'signup' ? 'signup' : 'login');
   const isOpen = Boolean(embeddedMode || queryMode === 'signup' || queryMode === 'login');
-  const next = searchParams.get('next') || defaultNext;
+  const next = safeInternalPath(searchParams.get('next') || defaultNext);
   const [mode, setMode] = useState<AuthMode>(requestedMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -71,7 +75,7 @@ export function AuthModal({ embeddedMode, defaultNext = '/dashboard' }: AuthModa
           email,
           password,
           options: {
-            emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/login?next=${encodeURIComponent(next || '/dashboard')}` : undefined,
+            emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}` : undefined,
           },
         })
       : await supabase.auth.signInWithPassword({ email, password });
