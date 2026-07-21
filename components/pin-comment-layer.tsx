@@ -7,9 +7,10 @@ interface PinCommentLayerProps {
   asset: ReviewAsset;
   version?: AssetVersion;
   comments: Comment[];
-  onAddComment: (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string) => void;
+  onAddComment: (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string, pageNumber?: number) => void;
   activeCommentId: string | null;
   onSelectComment: (commentId: string | null) => void;
+  pageNumber?: number;
 }
 
 function commentMatchesVersion(comment: Comment, asset: ReviewAsset, version?: AssetVersion) {
@@ -22,7 +23,7 @@ function commentMatchesVersion(comment: Comment, asset: ReviewAsset, version?: A
   return asset.versions.length <= 1 && !comment.assetVersionId && !comment.optionId;
 }
 
-export function PinCommentLayer({ asset, version, comments, onAddComment, activeCommentId, onSelectComment }: PinCommentLayerProps) {
+export function PinCommentLayer({ asset, version, comments, onAddComment, activeCommentId, onSelectComment, pageNumber }: PinCommentLayerProps) {
   const [draftText, setDraftText] = useState('');
   const [activePin, setActivePin] = useState<{ x: number; y: number } | null>(null);
 
@@ -45,7 +46,7 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
   const handleSave = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     if (!version || !activePin || !draftText.trim()) return;
-    onAddComment(asset.id, version.id, activePin.x, activePin.y, draftText.trim(), '');
+    onAddComment(asset.id, version.id, activePin.x, activePin.y, draftText.trim(), '', pageNumber);
     setDraftText('');
     setActivePin(null);
   };
@@ -63,21 +64,24 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
       ) : null}
 
       {comments
-        .filter((comment) => commentMatchesVersion(comment, asset, version) && !comment.parentCommentId && comment.x != null && comment.y != null)
-        .map((comment, index) => (
-          <button
-            key={comment.id}
-            data-pin-id={comment.id}
-            className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white text-sm font-semibold text-white shadow-lg ${activeCommentId === comment.id ? 'bg-stone-950 ring-2 ring-amber-300' : 'bg-amber-600'}`}
-            style={{ left: `${comment.x ?? 0}%`, top: `${comment.y ?? 0}%` }}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelectComment(comment.id);
-            }}
-          >
-            {index + 1}
-          </button>
-        ))}
+        .filter((comment) => commentMatchesVersion(comment, asset, version) && (pageNumber == null || (comment.pageNumber ?? 1) === pageNumber) && !comment.parentCommentId && comment.x != null && comment.y != null)
+        .map((comment, index) => {
+          const isCreatorNote = comment.authorRole === 'creator';
+          return (
+            <button
+              key={comment.id}
+              data-pin-id={comment.id}
+              className={`absolute flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-sm font-semibold shadow-lg ${activeCommentId === comment.id ? 'bg-stone-950 text-white ring-2 ring-amber-300' : isCreatorNote ? 'border-stone-950 bg-white text-stone-950' : 'border-white bg-amber-600 text-white'}`}
+              style={{ left: `${comment.x ?? 0}%`, top: `${comment.y ?? 0}%` }}
+              onClick={(event) => {
+                event.stopPropagation();
+                onSelectComment(comment.id);
+              }}
+            >
+              {index + 1}
+            </button>
+          );
+        })}
 
       {activePin ? (
         <div

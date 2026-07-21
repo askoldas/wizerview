@@ -1,10 +1,5 @@
-import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = {
-  robots: { index: false, follow: false },
-};
-
-export default function ProjectPage() {
-  redirect('/projects');
+export default function ProjectPage({ params }: { params: { projectId: string } }) {
+  redirect(`/dashboard?project=${encodeURIComponent(params.projectId)}`);
 }

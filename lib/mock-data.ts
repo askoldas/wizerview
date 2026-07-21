@@ -77,16 +77,38 @@ export interface ShareSettings {
   allowDecisions: boolean;
 }
 
+export interface ReviewBrief {
+  message: string;
+  focusPoints: string[];
+  requestedOutcome: string;
+  updatedAt?: string | null;
+}
+
+export interface DecisionOutcome {
+  type: 'reviewed' | 'approved' | 'changes_requested' | 'direction_selected' | 'combine_options';
+  note: string;
+  assetVersionId?: string | null;
+  reviewerName?: string | null;
+  createdAt?: string | null;
+}
+
+export type ReviewGoal = 'feedback_only' | 'select_version' | 'approve_final';
+
 export interface ReviewData {
   id: string;
   shareToken?: string;
   title: string;
   client: string;
   instructions: string;
+  reviewGoal: ReviewGoal;
+  clientVisible: boolean;
+  brief: ReviewBrief;
   shareSettings: ShareSettings;
   assets: ReviewAsset[];
   overallFeedback: string;
   decision: string;
+  decisionOutcome?: DecisionOutcome | null;
+  decisionOutcomes?: Record<string, DecisionOutcome>;
   selectedDirection: string | null;
   selectedAssetVersionId?: string | null;
   comments: Comment[];
@@ -252,6 +274,14 @@ export function normalizeReviewData(review: ReviewData | LegacyReviewData): Revi
     title: normalized.title ?? 'Untitled review',
     client: normalized.client ?? '',
     instructions: normalized.instructions ?? '',
+    reviewGoal: normalized.reviewGoal ?? (assets.some((asset) => asset.versions.length > 1) ? 'select_version' : 'approve_final'),
+    clientVisible: normalized.clientVisible ?? false,
+    brief: {
+      message: normalized.brief?.message ?? '',
+      focusPoints: Array.isArray(normalized.brief?.focusPoints) ? normalized.brief.focusPoints : [],
+      requestedOutcome: normalized.brief?.requestedOutcome ?? '',
+      updatedAt: normalized.brief?.updatedAt ?? null,
+    },
     shareSettings: normalized.shareSettings ?? {
       reviewerNameRequired: true,
       pinProtection: false,
@@ -276,6 +306,8 @@ export function normalizeReviewData(review: ReviewData | LegacyReviewData): Revi
     })),
     overallFeedback: normalized.overallFeedback ?? '',
     decision: normalized.decision ?? '',
+    decisionOutcome: normalized.decisionOutcome ?? null,
+    decisionOutcomes: normalized.decisionOutcomes ?? {},
     selectedDirection: normalized.selectedDirection ?? null,
     selectedAssetVersionId: normalized.selectedAssetVersionId ?? normalized.selectedDirection ?? null,
   };
@@ -286,6 +318,14 @@ export const initialReview: ReviewData = normalizeReviewData({
   title: 'Homepage Direction',
   client: 'Acme Studio',
   instructions: 'Please compare the homepage versions, leave notes, and select the strongest direction.',
+  reviewGoal: 'select_version',
+  clientVisible: false,
+  brief: {
+    message: '',
+    focusPoints: [],
+    requestedOutcome: '',
+    updatedAt: null,
+  },
   shareSettings: {
     reviewerNameRequired: true,
     pinProtection: false,

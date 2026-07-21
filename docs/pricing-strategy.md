@@ -43,12 +43,12 @@ Suggested limits:
 - 1 creator user
 - 1 active project
 - 1 active review link
-- up to 3 comparison options per review
+- up to 3 versions per deliverable
 - image/screenshot review
 - PDF review
 - pinned comments
-- general feedback
-- approve/request changes/select direction
+- pinned discussion and decision notes
+- approve/request changes/select a version
 - unlimited guest reviewers
 - WizerView branding
 - 250-500 MB storage
@@ -70,7 +70,7 @@ Included:
 - up to 10 active projects
 - multiple active review links
 - more storage
-- option groups
+- multiple deliverables and versions
 - unlimited guest reviewers
 - pinned comments and replies
 - approval/request changes/direction selected

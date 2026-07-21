@@ -2,125 +2,63 @@
 
 ## Vision
 
-WizerView is a fast, simple review and approval platform for visual client work.
-
-Instead of spreading feedback across email threads, screenshots, chat messages, and calls, each review gets a focused client-facing link where feedback happens directly on the work.
-
-The long-term goal is to become the default lightweight review and approval tool for freelancers, small studios, and creative teams.
+WizerView is a focused creative review platform for freelancers, studios, and clients. It keeps context, versions, discussion, and a clear outcome together around the work being reviewed.
 
 ## Positioning
 
 Review smarter. Approve faster.
 
-WizerView helps creators send visual work to clients, collect clear contextual feedback, compare directions, and get approval without forcing the client to create an account.
+Creators organize client work in projects, send focused reviews, and receive contextual feedback without requiring client accounts.
 
-## Defining Principle
+## Product Hierarchy
 
-Everything is centered around the asset, not the conversation.
+```text
+Project
+  -> Review
+    -> Deliverable
+      -> Version
+        -> Discussion
+      -> Deliverable Decision + Decision Note
+```
 
-WizerView is not a chat tool and not a project management board. The asset is the source of truth. The conversation exists only to clarify, improve, and approve the work.
+A Review Brief provides optional review-level context. A Deliverable Brief and Version Description add context at the point where it is useful.
+
+## Core Principle
+
+Deliverables are the source of truth. Discussion and decisions belong to a specific deliverable, and decisions may point to a specific version. WizerView is not a chat tool or a general project-management board.
 
 ## Target Users
 
-Primary:
-
-- Freelance designers
-- Freelance developers
-- Branding freelancers
-- Web designers
-- Small studios
-- Small creative agencies
-
-Secondary:
-
-- Marketing teams
-- Print/design teams
-- UI/UX teams
-- Product teams with simple review needs
-
-## Main Problem
-
-Client review often happens across disconnected tools:
-
-- email
-- WhatsApp
-- Slack
-- screenshots
-- calls
-- vague messages
-- forgotten requests
-
-The problem is not only that feedback is scattered. The bigger problem is that feedback is detached from the work.
+- Freelance designers and developers
+- Brand and web designers
+- Small studios and creative agencies
+- Marketing and product teams with lightweight review needs
 
 ## Product Promise
 
-WizerView gives every review one focused link where the client can:
-
-- open the review without registration
-- inspect the work
-- compare options
-- leave pinned visual comments
-- write general feedback
-- select a preferred direction
-- approve or request changes
+A client can open a link without registration, understand what is being reviewed, compare named versions, leave pinned discussion, and record a clear decision with an optional note.
 
 ## MVP Scope
 
-Include:
+- Creator accounts and client share links
+- Projects with client-facing project links
+- Reviews with an optional Review Brief and a defined goal
+- Deliverables with an optional Deliverable Brief
+- Named, editable versions for images, screenshots, and PDFs
+- Pinned discussion and replies tied to a deliverable/version
+- Deliverable-scoped decisions: approve, request changes, select a version, or mark reviewed
+- Review status derived from the latest decision for each deliverable
+- Share controls for comments, decisions, reviewer name, and project visibility
 
-- Creator account
-- New review flow
-- Optional project/folder organization
-- One default review option with a large asset canvas
-- Related assets within the same option
-- Optional comparison options when the creator adds Option B / Option C
-- Image and screenshot upload
-- PDF upload and page-based display
-- Simple pinned comments on visual assets
-- General comments at option and review level
-- Reviewer name required before feedback or decision
-- Optional PIN protection later
-- Review states and decision flow
-- Shareable review links
+## Not In Scope
 
-Exclude from first prototype:
-
-- Text draft assets
-- Live website embedding
-- Automatic URL-to-screenshot generation
-- Video
+- Client accounts, roles, and team workflows
+- Video review and live website embedding
 - Figma integration
-- Teams and roles
-- Billing implementation
-- Stripe
-- Email notification implementation
-- AI summaries
-- Integrations
-- Advanced version comparison
+- Email notifications, billing, and AI summaries
 - Kanban/task management
+- Automatic URL screenshots or server-side PDF rendering
 
-## Asset Types For MVP
+## Creative Direction
 
-Use visual review surfaces only:
-
-- PNG
-- JPG/JPEG
-- WebP
-- PDF rendered as pages
-- Website screenshots uploaded manually as images
-
-Text should not be a separate asset type in v1. If text needs review, the creator can upload it as a PDF, screenshot, or design mockup.
-
-## Competitive Direction
-
-Pastel is the closest reference for simplicity, but WizerView should be more freelancer-friendly and option-oriented.
-
-WizerView should differentiate through:
-
-- snapshot-first review
-- visual assets and PDFs from the start
-- option/direction comparison built into the review model
-- asset-first review setup instead of section-first forms
-- no client registration
-- simple free plan for first real client review
-- less task-management complexity than agency QA tools
+The primary comparison unit is a Version, while the durable top-level creative object is a Deliverable. This supports work such as Homepage -> Original / Dark Theme / Cleaner Hero, or Logo -> Monochrome / Gradient / Symbol Only.

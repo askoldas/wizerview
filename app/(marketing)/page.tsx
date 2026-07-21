@@ -21,7 +21,7 @@ export default function HomePage() {
       <TextBand title="Client feedback should not live in email threads." text="Feedback often gets scattered across email, screenshots, chat messages and calls. Comments lose context. Approvals become unclear. WizerView keeps feedback attached to the work itself." />
       <HowItWorks />
       <ToolCards />
-      <TextBand title="Everything happens around the work." text="Pinned comments, versions, replies, open and resolved comments, approval decisions and share links stay connected to the exact asset being reviewed." />
+      <TextBand title="Everything happens around the work." text="Pinned comments, versions, replies, open and resolved comments, approval decisions and share links stay connected to the exact deliverable being reviewed." />
       <SplitExperience />
       <CardGrid title="Start with one real client review for free." cards={[{ title: 'No credit card', text: 'No forced trial deadline. Upgrade when WizerView becomes part of your client workflow.', href: '/pricing' }]} />
       <FAQSection />

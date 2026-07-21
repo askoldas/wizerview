@@ -10,7 +10,7 @@ export function DecisionBar({ decision, onDecisionChange }: DecisionBarProps) {
     <div className="rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm font-medium text-stone-500">Final decision</p>
+          <p className="text-sm font-medium text-stone-500">Deliverable decision</p>
           <h3 className="text-lg font-semibold text-stone-900">Close the loop clearly</h3>
         </div>
         <div className="rounded-full bg-stone-100 px-3 py-2 text-sm text-stone-600">

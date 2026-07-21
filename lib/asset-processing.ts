@@ -39,6 +39,11 @@ export interface ProcessedPdfPreview extends ProcessedPreview {
   pageCount: number;
 }
 
+export interface PdfProcessingOptions {
+  signal?: AbortSignal;
+  onProgress?: (progress: { completedPages: number; totalPages: number; pageNumber: number }) => void;
+}
+
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
 const MAX_FREE_PDF_PAGES = 10;
@@ -48,6 +53,10 @@ const DEFAULT_PREVIEW_MAX_PIXELS = 6_000_000;
 const TALL_PREVIEW_MAX_PIXELS = 18_000_000;
 const THUMBNAIL_WIDTH = 320;
 const THUMBNAIL_MAX_HEIGHT = 2400;
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException('PDF processing was cancelled.', 'AbortError');
+}
 
 function createPlaceholderUrl(label: string, kind: 'preview' | 'thumb') {
   const svg = `
@@ -245,50 +254,99 @@ export async function processImagePreview(file: File): Promise<ProcessedPreview>
   };
 }
 
-export async function processPdfPreview(file: File): Promise<ProcessedPdfPreview> {
+export async function processPdfPreview(file: File, options: PdfProcessingOptions = {}): Promise<ProcessedPdfPreview> {
   const validation = validatePdfFile(file);
   if (!validation.valid) throw new Error(validation.reason);
 
-  await new Promise((resolve) => setTimeout(resolve, 900));
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    throw new Error('PDF processing is only available in a browser.');
+  }
 
-  const previewUrl = createPlaceholderUrl(file.name, 'preview');
-  const thumbnailUrl = createPlaceholderUrl(file.name, 'thumb');
+  throwIfAborted(options.signal);
+  const pdfjs = await import('pdfjs-dist');
+  // Next 14 minifies imported .mjs workers as application code. Keeping the
+  // worker external and version-matched lets pdf.js run it in a real browser
+  // worker without pulling it into the server bundle.
+  pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+  const cancel = () => loadingTask.destroy();
+  options.signal?.addEventListener('abort', cancel, { once: true });
 
-  const previewBytes = Math.max(120_000, Math.round(file.size * 0.12));
-  const pageCount = Math.min(3, MAX_FREE_PDF_PAGES);
+  try {
+    const pdf = await loadingTask.promise;
+    if (pdf.numPages > MAX_FREE_PDF_PAGES) {
+      throw new Error(`PDF has ${pdf.numPages} pages. Max ${MAX_FREE_PDF_PAGES} pages on the MVP free plan.`);
+    }
 
-  return {
-    id: `pdf-preview-${Date.now()}`,
-    kind: 'pdf',
-    originalName: file.name,
-    originalMimeType: file.type,
-    originalBytes: file.size,
-    previewUrl,
-    thumbnailUrl,
-    previewMimeType: 'image/webp',
-    previewBytes,
-    width: DEFAULT_PREVIEW_WIDTH,
-    height: 1800,
-    status: 'ready',
-    storageHint: `PDF pages prepared for review with ${pageCount} page preview(s).`,
-    pageCount,
-    pages: Array.from({ length: pageCount }, (_, index) => ({
-      id: `page-${Date.now()}-${index + 1}`,
-      kind: 'pdf' as const,
-      originalName: file.name,
-      originalMimeType: file.type,
-      originalBytes: file.size,
-      previewUrl,
-      thumbnailUrl,
-      previewMimeType: 'image/webp' as const,
-      previewBytes: Math.max(60_000, Math.round(previewBytes / (index + 1))),
-      width: DEFAULT_PREVIEW_WIDTH,
-      height: 1800,
-      status: 'ready' as const,
-      storageHint: `Page ${index + 1} preview generated.`,
-      pageNumber: index + 1,
-    })),
-  };
+    const pages: PdfPagePreview[] = [];
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      throwIfAborted(options.signal);
+      const page = await pdf.getPage(pageNumber);
+      const baseViewport = page.getViewport({ scale: 1 });
+      const scale = Math.min(2, DEFAULT_PREVIEW_WIDTH / baseViewport.width);
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(viewport.width));
+      canvas.height = Math.max(1, Math.round(viewport.height));
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) throw new Error('Could not prepare a PDF page canvas.');
+
+      await page.render({ canvasContext: context, viewport }).promise;
+      throwIfAborted(options.signal);
+      const previewBlob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.84));
+      if (!previewBlob) throw new Error(`Could not render PDF page ${pageNumber}.`);
+
+      const thumbnailSize = getConstrainedImageSize(canvas.width, canvas.height, {
+        maxWidth: THUMBNAIL_WIDTH,
+        maxPixels: THUMBNAIL_WIDTH * THUMBNAIL_MAX_HEIGHT,
+      });
+      const thumbnailCanvas = document.createElement('canvas');
+      thumbnailCanvas.width = thumbnailSize.width;
+      thumbnailCanvas.height = thumbnailSize.height;
+      const thumbnailContext = thumbnailCanvas.getContext('2d', { alpha: false });
+      if (!thumbnailContext) throw new Error('Could not prepare a PDF thumbnail canvas.');
+      thumbnailContext.drawImage(canvas, 0, 0, thumbnailSize.width, thumbnailSize.height);
+      const thumbnailBlob = await new Promise<Blob | null>((resolve) => thumbnailCanvas.toBlob(resolve, 'image/webp', 0.68));
+      if (!thumbnailBlob) throw new Error(`Could not create a thumbnail for PDF page ${pageNumber}.`);
+
+      const previewUpload = await uploadOptimizedPreviewToSupabase(previewBlob, `${file.name}-page-${pageNumber}`);
+      const thumbnailUpload = await uploadOptimizedPreviewToSupabase(thumbnailBlob, `${file.name}-page-${pageNumber}-thumb`);
+      const previewUrl = previewUpload?.url ?? URL.createObjectURL(previewBlob);
+      const thumbnailUrl = thumbnailUpload?.url ?? URL.createObjectURL(thumbnailBlob);
+      pages.push({
+        id: `pdf-page-${Date.now()}-${pageNumber}`,
+        kind: 'pdf', originalName: file.name, originalMimeType: file.type, originalBytes: file.size,
+        previewUrl, thumbnailUrl, previewMimeType: 'image/webp', previewBytes: previewBlob.size,
+        storagePath: previewUpload?.path, thumbnailStoragePath: thumbnailUpload?.path,
+        width: canvas.width, height: canvas.height, status: 'ready',
+        storageHint: 'Rendered WebP page preview. The original PDF was not uploaded.',
+        pageNumber, pageCount: pdf.numPages,
+      });
+      canvas.width = 1; canvas.height = 1;
+      thumbnailCanvas.width = 1; thumbnailCanvas.height = 1;
+      options.onProgress?.({ completedPages: pageNumber, totalPages: pdf.numPages, pageNumber });
+    }
+
+    const firstPage = pages[0];
+    if (!firstPage) throw new Error('The PDF contains no renderable pages.');
+    return {
+      ...firstPage,
+      id: `pdf-preview-${Date.now()}`,
+      status: 'ready',
+      pageCount: pdf.numPages,
+      pages,
+      storageHint: `${pdf.numPages} PDF page previews rendered in your browser. The original PDF was not uploaded.`,
+    };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    const name = typeof error === 'object' && error && 'name' in error ? String(error.name) : '';
+    if (name === 'PasswordException') throw new Error('Password-protected PDFs cannot be processed. Remove the password and upload again.');
+    if (name === 'InvalidPDFException') throw new Error('This PDF is corrupted or invalid.');
+    throw error;
+  } finally {
+    options.signal?.removeEventListener('abort', cancel);
+    await loadingTask.destroy();
+  }
 }
 
 export async function createThumbnail(image: ProcessedPreview | File) {

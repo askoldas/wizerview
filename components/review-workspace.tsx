@@ -3,15 +3,15 @@
 import Link from 'next/link';
 import { Suspense, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { FiClipboard, FiDownload, FiTrash2, FiUploadCloud } from 'react-icons/fi';
+import { FiCheckCircle, FiChevronDown, FiChevronLeft, FiChevronRight, FiClipboard, FiDownload, FiEdit3, FiMessageSquare, FiSliders, FiTrash2, FiUploadCloud, FiX } from 'react-icons/fi';
 import type { User } from '@supabase/supabase-js';
 import { AuthModal } from '@/components/auth/auth-modal';
 import { AssetSurface } from '@/components/asset-surface';
 import { BrandLogo } from '@/components/brand-logo';
 import { FeedbackPanel } from '@/components/feedback-panel';
 import { PinCommentLayer } from '@/components/pin-comment-layer';
-import { estimateStorageSavings, processImagePreview, processPdfPreview } from '@/lib/asset-processing';
-import type { AssetVersion, Comment, ReviewAsset, ReviewData, ShareSettings } from '@/lib/mock-data';
+import { processImagePreview, processPdfPreview, type PdfPagePreview } from '@/lib/asset-processing';
+import type { AssetVersion, Comment, DecisionOutcome, ReviewAsset, ReviewData, ShareSettings } from '@/lib/mock-data';
 import {
   createEmptyReviewData,
   deleteAsset,
@@ -28,7 +28,6 @@ import {
   saveCommentReply,
   saveReview,
   saveReviewerDecision,
-  saveReviewerFeedback,
   type ReviewerDecisionType,
 } from '@/lib/review-service';
 import { createSupabaseClientInstance, isSupabaseConfigured } from '@/lib/supabase';
@@ -40,9 +39,11 @@ interface ReviewWorkspaceProps {
   reviewId?: string;
   shareToken?: string;
   initialReview?: ReviewData;
+  authenticatedReviewer?: { displayName: string; email: string; projectHref?: string };
 }
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const zoomOptions = [{ value: 'fit', scale: 1, label: 'Fit' }, { value: '50', scale: 0.5, label: '50%' }, { value: '75', scale: 0.75, label: '75%' }, { value: '100', scale: 1, label: '100%' }, { value: '125', scale: 1.25, label: '125%' }, { value: '150', scale: 1.5, label: '150%' }] as const;
 
 function versionLabel(index: number) {
   return `Version ${alphabet[index] ?? index + 1}`;
@@ -92,6 +93,11 @@ function collectObjectUrls(review: ReviewData) {
   );
 }
 
+function getPdfPages(version?: AssetVersion): PdfPagePreview[] {
+  const pages = version?.metadata?.pdfPages;
+  return Array.isArray(pages) ? pages.filter((page): page is PdfPagePreview => Boolean(page) && typeof page === 'object' && 'pageNumber' in page && 'previewUrl' in page) : [];
+}
+
 function commentMatchesAssetVersion(comment: Comment, asset?: ReviewAsset, version?: AssetVersion) {
   if (!asset || comment.assetId !== asset.id) return false;
   if (!version) return false;
@@ -103,7 +109,7 @@ function commentMatchesAssetVersion(comment: Comment, asset?: ReviewAsset, versi
   return asset.versions.length <= 1 && !comment.assetVersionId && !comment.optionId;
 }
 
-export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: ReviewWorkspaceProps) {
+export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, authenticatedReviewer }: ReviewWorkspaceProps) {
   const isCreator = mode === 'creator';
   const router = useRouter();
   const pathname = usePathname();
@@ -116,19 +122,40 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   const [activeVersionId, setActiveVersionId] = useState(fallbackReview.assets[0]?.versions[0]?.id ?? '');
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [activePdfPage, setActivePdfPage] = useState(1);
+  const [previewZoom, setPreviewZoom] = useState<(typeof zoomOptions)[number]['value']>('fit');
   const [rightTab, setRightTab] = useState<'notes' | 'feedback'>('notes');
   const [commentFilter, setCommentFilter] = useState<'all' | 'open' | 'resolved'>('all');
+  const [originFilter, setOriginFilter] = useState<'all' | 'client' | 'creator'>('all');
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [showPins, setShowPins] = useState(true);
+  const [isFeedbackDrawerOpen, setIsFeedbackDrawerOpen] = useState(isCreator);
+  const [isAssetPickerOpen, setIsAssetPickerOpen] = useState(false);
+  const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
+  const [isVersionMenuOpen, setIsVersionMenuOpen] = useState(false);
+  const [isVersionNameDialogOpen, setIsVersionNameDialogOpen] = useState(false);
+  const [versionNameMode, setVersionNameMode] = useState<'create' | 'rename'>('create');
+  const [versionNameDraft, setVersionNameDraft] = useState('');
+  const [isElsewhereOpen, setIsElsewhereOpen] = useState(true);
+  const [isBriefExpanded, setIsBriefExpanded] = useState(isCreator);
+  const [isEditingBrief, setIsEditingBrief] = useState(false);
+  const [isEditingDeliverableBrief, setIsEditingDeliverableBrief] = useState(false);
+  const [deliverableBriefDraft, setDeliverableBriefDraft] = useState('');
+  const [isEditingVersionDescription, setIsEditingVersionDescription] = useState(false);
+  const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
+  const [versionDescriptionDraft, setVersionDescriptionDraft] = useState('');
+  const [briefDraft, setBriefDraft] = useState(fallbackReview.brief);
   const [isDropTargetActive, setIsDropTargetActive] = useState(false);
   const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [isPdfProcessing, setIsPdfProcessing] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isReviewLoaded, setIsReviewLoaded] = useState(false);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [isCheckingAuth, setIsCheckingAuth] = useState(isCreator && Boolean(supabase));
   const [hasMarkedSeen, setHasMarkedSeen] = useState(false);
-  const [reviewerName, setReviewerName] = useState('');
+  const [reviewerName, setReviewerName] = useState(authenticatedReviewer?.displayName ?? '');
+  const [decisionNote, setDecisionNote] = useState('');
+  const [pendingDecisionType, setPendingDecisionType] = useState<ReviewerDecisionType | null>(null);
   const [showIdentityModal, setShowIdentityModal] = useState(false);
   const [pendingComment, setPendingComment] = useState<{
     assetId: string;
@@ -137,12 +164,19 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     y: number;
     text: string;
     author: string;
+    pageNumber?: number;
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const versionNameInputRef = useRef<HTMLInputElement | null>(null);
+  const centerScrollRef = useRef<HTMLDivElement | null>(null);
+  const feedbackDrawerRef = useRef<HTMLDivElement | null>(null);
+  const discussionSectionRef = useRef<HTMLElement | null>(null);
+  const decisionSectionRef = useRef<HTMLElement | null>(null);
   const previewScrollRef = useRef<HTMLDivElement | null>(null);
   const commentCardRefs = useRef<Record<string, HTMLElement | null>>({});
   const savedReviewSignatureRef = useRef(getReviewSaveSignature(fallbackReview));
   const objectUrlsRef = useRef<Set<string>>(new Set());
+  const pdfAbortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!isCreator || !supabase) {
@@ -185,6 +219,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       setActiveAssetId(firstAsset?.id ?? '');
       setActiveVersionId(firstVersion?.id ?? '');
       setActiveCommentId(null);
+      setBriefDraft(loaded.brief);
+      setDecisionNote(loaded.decisionOutcome?.note ?? '');
       setIsReviewLoaded(true);
     });
 
@@ -192,6 +228,28 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       ignored = true;
     };
   }, [fallbackReviewId, shareToken]);
+
+  const drawerStorageKey = `wizerview:${mode}:${review.id}:feedback-drawer`;
+  const briefStorageKey = `wizerview:brief:${review.shareToken ?? review.id}:${review.brief.updatedAt ?? 'unversioned'}`;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.sessionStorage.getItem(drawerStorageKey);
+    setIsFeedbackDrawerOpen(saved == null ? isCreator : saved === 'open');
+  }, [drawerStorageKey, isCreator]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(drawerStorageKey, isFeedbackDrawerOpen ? 'open' : 'closed');
+  }, [drawerStorageKey, isFeedbackDrawerOpen]);
+
+  useEffect(() => {
+    setBriefDraft(review.brief);
+  }, [review.brief]);
+
+  useEffect(() => {
+    if (isVersionNameDialogOpen) window.requestAnimationFrame(() => versionNameInputRef.current?.focus());
+  }, [isVersionNameDialogOpen]);
 
   useEffect(() => {
     const nextObjectUrls = collectObjectUrls(review);
@@ -213,26 +271,83 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
   useEffect(() => {
     if (!activeCommentId) return;
 
-    window.requestAnimationFrame(() => {
+    const revealActiveComment = () => {
       const previewScroller = previewScrollRef.current;
       const pin = previewScroller?.querySelector<HTMLElement>(`[data-pin-id="${activeCommentId}"]`);
       pin?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
 
       commentCardRefs.current[activeCommentId]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    };
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(revealActiveComment);
     });
-  }, [activeAssetId, activeCommentId, activeVersionId, rightTab]);
+
+    const timer = window.setTimeout(revealActiveComment, 260);
+    return () => window.clearTimeout(timer);
+  }, [activeAssetId, activeCommentId, activeVersionId, isFeedbackDrawerOpen, rightTab]);
+
+  useEffect(() => {
+    if (!activeCommentId || typeof ResizeObserver === 'undefined') return;
+    const target = centerScrollRef.current;
+    if (!target) return;
+
+    const observer = new ResizeObserver(() => {
+      window.requestAnimationFrame(() => {
+        const pin = previewScrollRef.current?.querySelector<HTMLElement>(`[data-pin-id="${activeCommentId}"]`);
+        pin?.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
+      });
+    });
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [activeCommentId]);
 
   const activeAsset = review.assets.find((asset) => asset.id === activeAssetId) ?? review.assets[0];
   const activeVersion = activeAsset?.versions.find((version) => version.id === activeVersionId) ?? activeAsset?.versions[0];
-  const activeVersionIndex = Math.max(0, activeAsset?.versions.findIndex((version) => version.id === activeVersion?.id) ?? 0);
+  const activePdfPagePreview = getPdfPages(activeVersion).find((page) => page.pageNumber === activePdfPage);
+  const previewScale = zoomOptions.find((option) => option.value === previewZoom)?.scale ?? 1;
+  const displayVersion = activePdfPagePreview && activeVersion ? {
+    ...activeVersion,
+    previewUrl: activePdfPagePreview.previewUrl,
+    thumbnailUrl: activePdfPagePreview.thumbnailUrl,
+    previewBytes: activePdfPagePreview.previewBytes,
+    storagePath: activePdfPagePreview.storagePath,
+    thumbnailStoragePath: activePdfPagePreview.thumbnailStoragePath,
+    width: activePdfPagePreview.width,
+    height: activePdfPagePreview.height,
+    pageNumber: activePdfPagePreview.pageNumber,
+  } : activeVersion;
   const topLevelComments = review.comments.filter((comment) => !comment.parentCommentId);
   const assetComments = topLevelComments.filter((comment) => commentMatchesAssetVersion(comment, activeAsset, activeVersion));
-  const filteredAssetComments = assetComments.filter((comment) => commentFilter === 'all' || (comment.status ?? 'open') === commentFilter);
+  const filteredAssetComments = assetComments.filter((comment) => {
+    const statusMatches = commentFilter === 'all' || (comment.status ?? 'open') === commentFilter;
+    const originMatches =
+      originFilter === 'all' ||
+      (originFilter === 'creator' ? comment.authorRole === 'creator' : comment.authorRole !== 'creator');
+    return statusMatches && originMatches;
+  });
   const commentsOutsideActiveVersion = topLevelComments.filter((comment) => !commentMatchesAssetVersion(comment, activeAsset, activeVersion));
   const openCommentCount = getOpenCommentCount(review.comments);
   const resolvedCommentCount = getResolvedCommentCount(review.comments);
   const totalComments = topLevelComments.length;
   const hasMultipleVersions = (activeAsset?.versions.length ?? 0) > 1;
+  const activeVersionHasPreview = Boolean(activeVersion?.previewUrl && activeVersion.status === 'ready');
+  const hasBriefContent = Boolean(
+    review.brief.message.trim() ||
+    review.brief.requestedOutcome.trim() ||
+    review.brief.focusPoints.some((point) => point.trim())
+  );
+  const selectedVersionLabel = review.selectedAssetVersionId
+    ? review.assets.flatMap((asset) => asset.versions).find((version) => version.id === review.selectedAssetVersionId)?.label
+    : null;
+  const workflowSteps = [
+    { label: 'Review brief', done: hasBriefContent },
+    { label: 'Deliverable discussion', done: totalComments > 0 },
+    { label: 'Deliverable decision', done: Boolean(review.selectedAssetVersionId) },
+    { label: 'Review progress', done: openCommentCount === 0 && totalComments > 0 },
+    { label: 'Finish review', done: Boolean(review.decision) },
+  ];
   const shareSummary = useMemo(() => {
     const parts = [review.shareSettings.reviewerNameRequired ? 'name required' : 'name optional'];
     if (review.shareSettings.pinProtection) parts.push('PIN');
@@ -240,6 +355,36 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     if (review.shareSettings.allowDecisions) parts.push('decisions');
     return parts.join(' / ');
   }, [review.shareSettings]);
+
+  useEffect(() => {
+    if (!isReviewLoaded) return;
+    if (isCreator) {
+      setIsBriefExpanded(hasBriefContent || isEditingBrief);
+      return;
+    }
+    if (!hasBriefContent || typeof window === 'undefined') {
+      setIsBriefExpanded(false);
+      return;
+    }
+    setIsBriefExpanded(window.localStorage.getItem(briefStorageKey) !== 'seen');
+  }, [briefStorageKey, hasBriefContent, isCreator, isEditingBrief, isReviewLoaded]);
+
+  const markBriefSeen = () => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(briefStorageKey, 'seen');
+    }
+  };
+
+  const collapseBrief = () => {
+    if (!isCreator) markBriefSeen();
+    setIsBriefExpanded(false);
+  };
+
+  const handleCenterScroll = () => {
+    if (!isCreator && isBriefExpanded && centerScrollRef.current && centerScrollRef.current.scrollTop > 32) {
+      collapseBrief();
+    }
+  };
 
   useEffect(() => {
     if (!activeAsset) return;
@@ -285,8 +430,16 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     });
   }, [authUser, hasMarkedSeen, isCreator, isReviewLoaded, review.id]);
 
+  useEffect(() => {
+    if (isCreator || authenticatedReviewer || !shareToken || reviewerName) return;
+    fetch(`/api/guest-session?shareToken=${encodeURIComponent(shareToken)}`).then((response) => response.ok ? response.json() : null).then((data) => {
+      if (data?.displayName) setReviewerName(data.displayName);
+    }).catch(() => undefined);
+  }, [authenticatedReviewer, isCreator, reviewerName, shareToken]);
+
   const requireName = () => {
     if (isCreator) return true;
+    if (authenticatedReviewer) return true;
     if (!review.shareSettings.reviewerNameRequired) return true;
     if (!reviewerName.trim()) {
       setShowIdentityModal(true);
@@ -311,7 +464,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     setActiveVersionId(nextVersionId);
     setActiveCommentId(comment.id);
     setCommentFilter('all');
+    setOriginFilter('all');
     setRightTab('notes');
+    setIsFeedbackDrawerOpen(true);
   };
 
   const copyReviewLink = async () => {
@@ -416,7 +571,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         asset.id === activeAsset.id
           ? {
               ...asset,
-              title: asset.title === 'Primary asset' ? file.name.replace(/\.[^.]+$/, '') : asset.title,
+              title: asset.title === 'Primary deliverable' ? file.name.replace(/\.[^.]+$/, '') : asset.title,
               assetType: file.type === 'application/pdf' ? 'pdf' : asset.assetType,
               versions: asset.versions.map((version) => (version.id === activeVersion.id ? pendingVersion : version)),
             }
@@ -427,7 +582,15 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     setUploadMessage(`Uploading ${file.name}...`);
 
     try {
-      const processed = file.type === 'application/pdf' ? await processPdfPreview(file) : await processImagePreview(file);
+      const controller = file.type === 'application/pdf' ? new AbortController() : null;
+      pdfAbortControllerRef.current = controller;
+      setIsPdfProcessing(Boolean(controller));
+      const processed = file.type === 'application/pdf'
+        ? await processPdfPreview(file, {
+            signal: controller?.signal,
+            onProgress: ({ completedPages, totalPages }) => setUploadMessage(`Rendering PDF page ${completedPages} of ${totalPages}…`),
+          })
+        : await processImagePreview(file);
       const nextVersion: AssetVersion = {
         ...pendingVersion,
         status: 'ready',
@@ -445,6 +608,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         height: processed.height,
         pageCount: processed.pageCount,
         pageNumber: 1,
+        metadata: 'pages' in processed ? { ...pendingVersion.metadata, pdfPages: processed.pages } : pendingVersion.metadata,
         storageHint: processed.storageHint,
       };
 
@@ -454,18 +618,20 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           asset.id === activeAsset.id
             ? {
                 ...asset,
-                title: asset.title === 'Primary asset' ? processed.originalName.replace(/\.[^.]+$/, '') : asset.title,
-                description: processed.storageHint,
-                notes: `${processed.previewMimeType.toUpperCase()} preview / ${formatByteSize(processed.previewBytes)} / ${estimateStorageSavings(processed.originalBytes, processed.previewBytes)}% smaller`,
+                title: asset.title === 'Primary deliverable' ? processed.originalName.replace(/\.[^.]+$/, '') : asset.title,
+                // The deliverable description is its creator-written Brief. Processing details
+                // stay on the version, never in client-facing deliverable context.
                 assetType: processed.kind === 'pdf' ? 'pdf' : 'screenshot',
                 versions: asset.versions.map((version) => (version.id === activeVersion.id ? nextVersion : version)),
               }
             : asset
         ),
       }));
-      setUploadMessage(`Original ${formatByteSize(processed.originalBytes)} -> Preview ${formatByteSize(processed.previewBytes)} ${processed.previewMimeType.toUpperCase()}`);
+      setUploadMessage('pages' in processed
+        ? `${processed.pageCount} PDF page previews are ready. The original PDF was not uploaded.`
+        : `Original ${formatByteSize(processed.originalBytes)} -> Preview ${formatByteSize(processed.previewBytes)} ${processed.previewMimeType.toUpperCase()}`);
     } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Processing failed.';
+      const reason = error instanceof DOMException && error.name === 'AbortError' ? 'PDF processing cancelled.' : error instanceof Error ? error.message : 'Processing failed.';
       setReview((current) => ({
         ...current,
         assets: current.assets.map((asset) =>
@@ -479,6 +645,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
         ),
       }));
       setUploadMessage(reason);
+    } finally {
+      pdfAbortControllerRef.current = null;
+      setIsPdfProcessing(false);
     }
   };
 
@@ -522,14 +691,44 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     }
   };
 
-  const addVersion = () => {
+  const suggestedVersionName = activeAsset ? versionLabel(activeAsset.versions.length) : 'Version A';
+
+  const openCreateVersionDialog = () => {
     if (!activeAsset) return;
+    setVersionNameMode('create');
+    setVersionNameDraft('');
+    setIsVersionNameDialogOpen(true);
+  };
+
+  const openRenameVersionDialog = () => {
+    if (!activeVersion) return;
+    setVersionNameMode('rename');
+    setVersionNameDraft(activeVersion.label);
+    setIsVersionMenuOpen(false);
+    setIsVersionNameDialogOpen(true);
+  };
+
+  const saveVersionName = () => {
+    if (!activeAsset) return;
+    const displayName = versionNameDraft.trim() || (versionNameMode === 'create' ? suggestedVersionName : activeVersion?.label || suggestedVersionName);
+
+    if (versionNameMode === 'rename' && activeVersion) {
+      setReview((current) => ({
+        ...current,
+        assets: current.assets.map((asset) => asset.id === activeAsset.id
+          ? { ...asset, versions: asset.versions.map((version) => version.id === activeVersion.id ? { ...version, label: displayName } : version) }
+          : asset),
+      }));
+      setIsVersionNameDialogOpen(false);
+      return;
+    }
+
     const nextIndex = activeAsset.versions.length;
     const newVersion: AssetVersion = {
       id: `${activeAsset.id}-version-${Date.now()}`,
       assetId: activeAsset.id,
       reviewId: review.id,
-      label: versionLabel(nextIndex),
+      label: displayName,
       versionNumber: nextIndex + 1,
       sortOrder: nextIndex,
       status: 'idle',
@@ -541,6 +740,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     }));
     setActiveVersionId(newVersion.id);
     setActiveCommentId(null);
+    setIsVersionNameDialogOpen(false);
   };
 
   const addRelatedAsset = () => {
@@ -549,9 +749,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     const newAsset: ReviewAsset = {
       id: `asset-${Date.now()}`,
       reviewId: review.id,
-      title: 'Related asset',
+      title: 'Related deliverable',
       assetType: 'screenshot',
-      description: 'A new reviewable asset.',
+      description: '',
       sortOrder: review.assets.length,
       status: 'in_review',
       accent: 'from-stone-700 via-stone-500 to-stone-200',
@@ -600,9 +800,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       setActiveAssetId(nextAsset?.id ?? '');
       setActiveVersionId(nextAsset?.versions[0]?.id ?? '');
       setActiveCommentId(null);
-      setSaveMessage('Asset deleted.');
+      setSaveMessage('Deliverable deleted.');
     } catch (error) {
-      setSaveMessage(error instanceof Error ? error.message : 'Could not delete asset.');
+      setSaveMessage(error instanceof Error ? error.message : 'Could not delete deliverable.');
     }
   };
 
@@ -675,16 +875,20 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       return nextReview;
     });
     setActiveCommentId(comment.id);
+    setCommentFilter('all');
+    setOriginFilter('all');
+    setRightTab('notes');
+    setIsFeedbackDrawerOpen(true);
   };
 
-  const handleAddComment = (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string) => {
+  const handleAddComment = (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string, pageNumber?: number) => {
     if (!isCreator && !review.shareSettings.allowComments) {
       setSaveMessage('Comments are disabled for this review.');
       return;
     }
 
     if (!requireName()) {
-      setPendingComment({ assetId, assetVersionId, x, y, text, author });
+      setPendingComment({ assetId, assetVersionId, x, y, text, author, pageNumber });
       return;
     }
 
@@ -693,6 +897,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       reviewId: review.id,
       assetId,
       assetVersionId,
+      pageNumber,
       x,
       y,
       text,
@@ -757,65 +962,63 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     }
   };
 
-  const handleNameSubmit = () => {
+  const handleNameSubmit = async () => {
     if (!reviewerName.trim()) return;
+    if (!isCreator && !authenticatedReviewer && shareToken) {
+      const response = await fetch('/api/guest-session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ shareToken, displayName: reviewerName.trim() }) });
+      if (!response.ok) setSaveMessage('Your name will apply to this review only.');
+    }
     setShowIdentityModal(false);
 
     if (pendingComment) {
-      const { assetId, assetVersionId, x, y, text, author } = pendingComment;
+      const { assetId, assetVersionId, x, y, text, author, pageNumber } = pendingComment;
       setPendingComment(null);
-      handleAddComment(assetId, assetVersionId, x, y, text, author);
+      handleAddComment(assetId, assetVersionId, x, y, text, author, pageNumber);
     }
   };
 
-  const handleFeedbackChange = (value: string) => {
-    if (!isCreator && !review.shareSettings.allowComments) {
-      setSaveMessage('Feedback is disabled for this review.');
-      return;
-    }
-
-    if (!requireName()) return;
-    setReview((current) => ({ ...current, overallFeedback: value }));
+  const handleSaveBrief = () => {
+    if (!isCreator) return;
+    const nextBrief = {
+      message: briefDraft.message.trim(),
+      focusPoints: briefDraft.focusPoints.map((point) => point.trim()).filter(Boolean),
+      requestedOutcome: briefDraft.requestedOutcome.trim(),
+      updatedAt: new Date().toISOString(),
+    };
+    setReview((current) => ({ ...current, brief: nextBrief }));
+    setBriefDraft(nextBrief);
+    setIsEditingBrief(false);
+    setIsBriefExpanded(true);
+    setSaveMessage('Review brief updated.');
   };
 
-  const handleSaveFeedback = async () => {
-    if (!review.shareSettings.allowComments) {
-      setSaveMessage('Feedback is disabled for this review.');
-      return;
-    }
+  // Kept only for a non-rendered legacy branch while old persisted feedback remains readable.
+  const handleFeedbackChange = () => {};
+  const handleSaveFeedback = async () => {};
 
-    if (!requireName()) return;
-    if (!review.overallFeedback.trim()) return;
-
-    try {
-      await saveReviewerFeedback({
-        reviewId: review.id,
-        shareToken: review.shareToken,
-        reviewerName: reviewerName || 'Reviewer',
-        body: review.overallFeedback.trim(),
-      });
-      setSaveMessage('Feedback saved.');
-    } catch (error) {
-      setSaveMessage(error instanceof Error ? error.message : 'Could not save feedback.');
-    }
-  };
-
-  const persistDecision = async (type: ReviewerDecisionType, note: string, assetVersionId?: string | null) => {
+  const persistDecision = async (type: ReviewerDecisionType, assetVersionId?: string | null) => {
     if (!review.shareSettings.allowDecisions) {
       setSaveMessage('Decisions are disabled for this review.');
+      return;
+    }
+    if (!activeAsset) {
+      setSaveMessage('Add or select a deliverable before recording a decision.');
       return;
     }
 
     try {
       await saveReviewerDecision({
         reviewId: review.id,
+        assetId: activeAsset.id,
         shareToken: review.shareToken,
         assetVersionId: assetVersionId ?? null,
         reviewerName: reviewerName || 'Reviewer',
         type,
-        note,
+        note: decisionNote.trim(),
       });
-      setSaveMessage('Decision saved.');
+      const outcome: DecisionOutcome = { type, note: decisionNote.trim(), assetVersionId: assetVersionId ?? null, reviewerName: reviewerName || 'Reviewer', createdAt: new Date().toISOString() };
+      setReview((current) => ({ ...current, decision: outcome.note, decisionOutcome: outcome, decisionOutcomes: { ...(current.decisionOutcomes ?? {}), [activeAsset.id]: outcome }, selectedDirection: assetVersionId ?? current.selectedDirection, selectedAssetVersionId: assetVersionId ?? current.selectedAssetVersionId }));
+      setSaveMessage('Decision submitted.');
     } catch (error) {
       setSaveMessage(error instanceof Error ? error.message : 'Could not save decision.');
     }
@@ -823,25 +1026,58 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
 
   const handleSelectVersion = () => {
     if (!requireName() || !activeVersion) return;
-    const note = `Selected version: ${activeVersion.label}`;
-    setReview((current) => ({ ...current, selectedDirection: activeVersion.id, selectedAssetVersionId: activeVersion.id, decision: note }));
-    void persistDecision('direction_selected', note, activeVersion.id);
+    void persistDecision(review.reviewGoal === 'feedback_only' ? 'reviewed' : 'direction_selected', activeVersion.id);
   };
 
-  const handleDecisionChange = (decision: string, type: ReviewerDecisionType) => {
+  const handleDecisionChange = (type: ReviewerDecisionType | string, legacyType?: ReviewerDecisionType) => {
     if (!requireName()) return;
-    setReview((current) => ({ ...current, decision }));
-    void persistDecision(type, decision, null);
+    const decisionType = legacyType ?? type as ReviewerDecisionType;
+    void persistDecision(decisionType, activeVersion?.id ?? null);
+  };
+
+  const openDrawerSection = (section: 'discussion' | 'decision') => {
+    setIsFeedbackDrawerOpen(true);
+    setIsAssetPickerOpen(false);
+    setRightTab(section === 'discussion' ? 'notes' : 'feedback');
+    const target = {
+      discussion: discussionSectionRef,
+      decision: decisionSectionRef,
+    }[section];
+    window.requestAnimationFrame(() => target.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+
+  const saveDeliverableBrief = () => {
+    if (!activeAsset) return;
+    setReview((current) => ({ ...current, assets: current.assets.map((asset) => asset.id === activeAsset.id ? { ...asset, description: deliverableBriefDraft.trim() } : asset) }));
+    setIsEditingDeliverableBrief(false);
+  };
+
+  const saveVersionDescription = () => {
+    if (!activeAsset || !activeVersion) return;
+    setReview((current) => ({ ...current, assets: current.assets.map((asset) => asset.id === activeAsset.id ? { ...asset, versions: asset.versions.map((version) => version.id === activeVersion.id ? { ...version, metadata: { ...version.metadata, description: versionDescriptionDraft.trim() } } : version) } : asset) }));
+    setIsEditingVersionDescription(false);
+  };
+
+  const renderDeliverableBrief = () => {
+    const brief = activeAsset?.description?.trim() ?? '';
+    const legacyBrief = review.brief.message.trim();
+    if (!isCreator && !brief && !legacyBrief) return null;
+    if (!brief && legacyBrief) return <section className="rounded-[12px] border border-stone-200 bg-white p-4"><p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Review brief</p><p className="mt-2 text-sm leading-6 text-stone-700">{legacyBrief}</p></section>;
+    if (isCreator && !brief && !isEditingDeliverableBrief) return <button type="button" onClick={() => { setDeliverableBriefDraft(''); setIsEditingDeliverableBrief(true); }} className="inline-flex w-fit rounded-[8px] border border-dashed border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">Add brief</button>;
+    if (isCreator && isEditingDeliverableBrief) return <section className="rounded-[12px] border border-stone-200 bg-white p-4"><p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Deliverable brief</p><textarea value={deliverableBriefDraft} onChange={(event) => setDeliverableBriefDraft(event.target.value)} placeholder="Explain what to review and what to focus on." className="mt-3 min-h-24 w-full rounded-[8px] border border-stone-200 px-3 py-2 text-sm" /><div className="mt-3 flex gap-2"><button type="button" onClick={() => setIsEditingDeliverableBrief(false)} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-700">Cancel</button><button type="button" onClick={saveDeliverableBrief} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save brief</button></div></section>;
+    return <section className="rounded-[12px] border border-stone-200 bg-white p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Deliverable brief</p><p className="mt-2 text-sm leading-6 text-stone-800">{brief}</p></div>{isCreator ? <button type="button" onClick={() => { setDeliverableBriefDraft(brief); setIsEditingDeliverableBrief(true); }} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700">Edit</button> : null}</div></section>;
   };
 
   const renderAssetRailButton = (asset: ReviewAsset) => {
     const thumbnailVersion = asset.versions.find((version) => version.thumbnailUrl || version.previewUrl) ?? asset.versions[0];
     const isActive = activeAsset?.id === asset.id;
+    const outcome = review.decisionOutcomes?.[asset.id];
+    const outcomeLabel = outcome?.type === 'approved' ? 'Approved' : outcome?.type === 'changes_requested' ? 'Changes requested' : outcome?.type === 'direction_selected' ? 'Version selected' : outcome?.type === 'reviewed' ? 'Reviewed' : null;
 
     return (
     <article
       key={asset.id}
-      className={`group relative w-full rounded-md border bg-surface p-2 text-left transition ${isActive ? 'border-brand shadow-sm' : 'border-transparent hover:border-border'}`}
+      className={`group relative w-full self-start rounded-md border bg-surface p-2 text-left transition ${isActive ? 'border-brand shadow-sm' : 'border-transparent hover:border-border'}`}
     >
       <button
         type="button"
@@ -849,6 +1085,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           setActiveAssetId(asset.id);
           setActiveVersionId(asset.versions[0]?.id ?? '');
           setActiveCommentId(null);
+          setIsAssetPickerOpen(false);
         }}
         className="block w-full text-left"
       >
@@ -864,12 +1101,13 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
           <span className="text-xs font-semibold leading-4 text-text">{asset.title}</span>
           {isCreator ? <span className="text-text-subtle">...</span> : null}
         </div>
+        {outcomeLabel ? <span className="mt-1 block text-[11px] font-semibold text-emerald-700">{outcomeLabel}</span> : null}
       </button>
       {isCreator ? (
         <button
           type="button"
           aria-label={`Delete ${asset.title}`}
-          title="Delete asset"
+          title="Delete deliverable"
           onClick={(event) => {
             event.stopPropagation();
             void handleDeleteAsset(asset);
@@ -883,10 +1121,369 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
     );
   };
 
-  const activeVersionHasPreview = Boolean(activeVersion?.previewUrl && activeVersion.status === 'ready');
+  const renderReviewBrief = () => {
+    if (!hasBriefContent && !isCreator) return null;
+
+    if (isCreator && !hasBriefContent && !isEditingBrief) {
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            setBriefDraft(review.brief);
+            setIsEditingBrief(true);
+            setIsBriefExpanded(true);
+          }}
+          className="inline-flex w-fit items-center gap-2 rounded-[8px] border border-dashed border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50"
+        >
+          <FiEdit3 aria-hidden="true" className="h-4 w-4" />
+          Add brief
+        </button>
+      );
+    }
+
+    if (isCreator && isEditingBrief) {
+      return (
+        <section className="rounded-[12px] border border-stone-200 bg-white px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Review brief</p>
+              <p className="mt-1 text-sm text-stone-600">Set the context clients should see before reviewing.</p>
+            </div>
+            <button type="button" onClick={handleSaveBrief} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
+              Save brief
+            </button>
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_0.9fr]">
+            <label className="grid gap-1 text-sm font-semibold text-stone-800">
+              Message
+              <textarea
+                value={briefDraft.message}
+                onChange={(event) => setBriefDraft((current) => ({ ...current, message: event.target.value }))}
+                className="min-h-24 rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-normal text-stone-900"
+                placeholder="What should the reviewer know before they start?"
+              />
+            </label>
+            <div className="grid gap-3">
+              <label className="grid gap-1 text-sm font-semibold text-stone-800">
+                Focus points
+                <textarea
+                  value={briefDraft.focusPoints.join('\n')}
+                  onChange={(event) => setBriefDraft((current) => ({ ...current, focusPoints: event.target.value.split('\n') }))}
+                  className="min-h-24 rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-normal text-stone-900"
+                  placeholder="One point per line"
+                />
+              </label>
+              <label className="grid gap-1 text-sm font-semibold text-stone-800">
+                Requested outcome
+                <input
+                  value={briefDraft.requestedOutcome}
+                  onChange={(event) => setBriefDraft((current) => ({ ...current, requestedOutcome: event.target.value }))}
+                  className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-normal text-stone-900"
+                  placeholder="Select a direction, request changes, approve..."
+                />
+              </label>
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    if (!isBriefExpanded) {
+      return (
+        <button
+          type="button"
+          onClick={() => setIsBriefExpanded(true)}
+          className="inline-flex w-fit items-center gap-2 rounded-[8px] border border-stone-200 bg-white px-3 py-2 text-sm font-semibold text-stone-700 shadow-sm hover:bg-stone-50"
+        >
+          Review brief
+          <FiChevronDown aria-hidden="true" className="h-4 w-4" />
+        </button>
+      );
+    }
+
+    return (
+      <section className="rounded-[12px] border border-stone-200 bg-white px-4 py-3 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-stone-500">Review brief</p>
+            {review.brief.updatedAt ? <p className="mt-1 text-xs text-stone-500">Updated {new Date(review.brief.updatedAt).toLocaleDateString()}</p> : null}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {isCreator ? (
+              <button type="button" onClick={() => setIsEditingBrief(true)} className="inline-flex items-center gap-2 rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
+                <FiEdit3 aria-hidden="true" className="h-4 w-4" />
+                Edit
+              </button>
+            ) : (
+              <button type="button" onClick={collapseBrief} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
+                Start reviewing
+              </button>
+            )}
+            <button type="button" onClick={collapseBrief} className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] border border-stone-200 text-stone-600 hover:bg-stone-50" aria-label="Collapse review brief">
+              <FiChevronDown aria-hidden="true" className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        {review.brief.message ? <p className="mt-3 text-sm leading-6 text-stone-800">{review.brief.message}</p> : null}
+        {review.brief.focusPoints.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {review.brief.focusPoints.map((point) => (
+              <span key={point} className="rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-700">{point}</span>
+            ))}
+          </div>
+        ) : null}
+        {review.brief.requestedOutcome ? <p className="mt-3 text-sm font-semibold text-stone-950">{review.brief.requestedOutcome}</p> : null}
+      </section>
+    );
+  };
+
+  const renderCommentThread = (comment: Comment, index: number) => {
+    const isActive = activeCommentId === comment.id;
+    const isResolved = comment.status === 'resolved';
+    const isCreatorNote = comment.authorRole === 'creator';
+
+    return (
+      <article
+        key={comment.id}
+        ref={(node) => {
+          commentCardRefs.current[comment.id] = node;
+        }}
+        className={`rounded-[10px] border text-sm transition ${isActive ? 'border-stone-950 bg-white shadow-md' : isResolved ? 'border-stone-200 bg-stone-50' : 'border-stone-200 bg-white'}`}
+      >
+        <button type="button" onClick={() => focusComment(comment)} aria-expanded={isActive} className="block w-full px-3 py-2.5 text-left">
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-semibold text-stone-950">{comment.author}</span>
+            <span className="text-xs uppercase tracking-[0.18em] text-stone-500">Pin {index + 1}</span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-stone-500">
+            <span className={`rounded-full px-2 py-0.5 ${isResolved ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{isResolved ? 'Resolved' : 'Open'}</span>
+            <span className={isCreatorNote ? 'font-semibold text-stone-900' : ''}>{isCreatorNote ? 'Creator note' : 'Client feedback'}</span>
+            {comment.createdAt ? <span>{new Date(comment.createdAt).toLocaleDateString()}</span> : null}
+            {(comment.replies ?? []).length > 0 ? <span>{comment.replies?.length} replies</span> : null}
+          </div>
+          <p className={`mt-2 text-sm leading-5 text-stone-700 ${isActive ? '' : 'line-clamp-2'}`}>{comment.text}</p>
+        </button>
+
+        {isActive ? (
+          <div className="border-t border-stone-100 px-3 py-3">
+            {(comment.replies ?? []).length > 0 ? (
+            <div className="space-y-2 border-l border-stone-200 pl-3">
+                {(comment.replies ?? []).map((reply) => (
+                  <div key={reply.id} className="text-sm text-stone-700">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                      <span className="font-semibold text-stone-800">{reply.author}</span>
+                      <span>{reply.authorRole === 'creator' ? 'Creator' : 'Client'}</span>
+                      {reply.createdAt ? <span>{new Date(reply.createdAt).toLocaleDateString()}</span> : null}
+                    </div>
+                    <p className="mt-1 leading-5">{reply.text}</p>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {(isCreator || review.shareSettings.allowComments) ? (
+              <div className="mt-3 grid gap-2">
+                <textarea
+                  value={replyDrafts[comment.id] ?? ''}
+                  onChange={(event) => setReplyDrafts((current) => ({ ...current, [comment.id]: event.target.value }))}
+                  placeholder="Reply to this thread"
+                  className="min-h-16 rounded-[8px] border border-stone-200 bg-white px-3 py-2 text-sm text-stone-900"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void handleReplySubmit(comment.id)} className="rounded-[8px] border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700">Reply</button>
+                  {isCreator && (comment.status ?? 'open') === 'open' ? (
+                    <button type="button" onClick={() => void handleResolveComment(comment.id)} className="rounded-[8px] bg-stone-950 px-3 py-1.5 text-xs font-semibold text-white">Resolve</button>
+                  ) : null}
+                  {isCreator && comment.status === 'resolved' ? (
+                    <button type="button" onClick={() => void handleReopenComment(comment.id)} className="rounded-[8px] border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700">Reopen</button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </article>
+    );
+  };
+
+  const renderNotesPanel = () => (
+    <section ref={discussionSectionRef} className="scroll-mt-4">
+      <div className="bg-white pb-3">
+        <div className="mb-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Deliverable discussion</p>
+          <p className="mt-1 text-sm text-stone-600">Pinned threads for the active deliverable and version.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {[
+            { key: 'all' as const, label: `All ${assetComments.length}` },
+            { key: 'client' as const, label: `Client ${assetComments.filter((comment) => comment.authorRole !== 'creator').length}` },
+            { key: 'creator' as const, label: `Creator ${assetComments.filter((comment) => comment.authorRole === 'creator').length}` },
+          ].map((filter) => (
+            <button key={filter.key} type="button" onClick={() => setOriginFilter(filter.key)} className={`rounded-[8px] px-2.5 py-1.5 text-xs font-semibold ${originFilter === filter.key ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-600'}`}>
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {[
+            { key: 'all' as const, label: `All status` },
+            { key: 'open' as const, label: `Open ${assetComments.filter((comment) => (comment.status ?? 'open') === 'open').length}` },
+            { key: 'resolved' as const, label: `Resolved ${assetComments.filter((comment) => comment.status === 'resolved').length}` },
+          ].map((filter) => (
+            <button key={filter.key} type="button" onClick={() => setCommentFilter(filter.key)} className={`rounded-[8px] px-2.5 py-1.5 text-xs font-semibold ${commentFilter === filter.key ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-600'}`}>
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-stone-500">{openCommentCount} open / {resolvedCommentCount} resolved across this review</p>
+      </div>
+
+      <div className="space-y-3">
+        {filteredAssetComments.length > 0 ? filteredAssetComments.map(renderCommentThread) : (
+          <p className="rounded-[10px] border border-dashed border-stone-300 bg-stone-50 px-3 py-3 text-sm text-stone-600">{assetComments.length ? 'No discussion threads match these filters.' : review.shareSettings.allowComments || isCreator ? 'Click the preview to add a pinned discussion thread.' : 'Discussion is disabled for this review.'}</p>
+        )}
+
+        {commentsOutsideActiveVersion.length > 0 ? (
+          <div className="rounded-[10px] border border-stone-200 bg-white px-3 py-3">
+            <button type="button" onClick={() => setIsElsewhereOpen((current) => !current)} className="flex w-full items-center justify-between gap-3 text-left">
+              <span className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">Elsewhere in review</span>
+              <span className="text-xs font-semibold text-stone-500">{commentsOutsideActiveVersion.length}</span>
+            </button>
+            {isElsewhereOpen ? (
+              <div className="mt-2 space-y-2">
+                {commentsOutsideActiveVersion.slice(0, 6).map((comment) => (
+                  <button key={comment.id} type="button" onClick={() => focusComment(comment)} className="block w-full rounded-[8px] bg-stone-50 px-2.5 py-2 text-left text-xs text-stone-700 hover:bg-stone-100">
+                    <span className="block font-semibold text-stone-950">{getCommentLocationLabel(comment)}</span>
+                    <span className="mt-1 block truncate">{comment.text}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+
+  const renderOutcomePanel = () => {
+    const outcome = activeAsset ? review.decisionOutcomes?.[activeAsset.id] ?? review.decisionOutcome : review.decisionOutcome;
+    const outcomeLabel = outcome?.type === 'changes_requested' ? 'Changes requested' : outcome?.type === 'direction_selected' ? 'Version selected' : outcome?.type === 'combine_options' ? 'Merge ideas requested' : outcome?.type === 'reviewed' ? 'Reviewed' : 'Approved';
+    const isSelectionGoal = review.reviewGoal === 'select_version';
+    const isFeedbackGoal = review.reviewGoal === 'feedback_only';
+    const noteLabel = pendingDecisionType === 'changes_requested' ? 'What should be changed?' : pendingDecisionType === 'direction_selected' ? 'Why did you choose this version?' : isFeedbackGoal ? 'Any final note for the creator?' : 'Anything else the creator should know?';
+    return (
+      <section ref={decisionSectionRef} className="scroll-mt-4 rounded-[12px] border border-stone-200 bg-white p-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Deliverable decision</p>
+        <div className="mt-3 rounded-[10px] bg-stone-50 px-3 py-2 text-sm text-stone-700"><span className="font-semibold text-stone-950">Deliverable:</span> {activeAsset?.title ?? 'No deliverable'}</div>
+        {selectedVersionLabel ? <p className="mt-2 rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Selected version: {selectedVersionLabel}</p> : null}
+        {!isCreator && review.shareSettings.allowDecisions && !outcome ? <>{pendingDecisionType ? <><label className="mt-4 block text-sm font-semibold text-stone-900">{noteLabel}<textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} placeholder="Optional decision note" className="mt-2 min-h-24 w-full rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-normal" /></label><div className="mt-3 flex gap-2"><button type="button" onClick={() => { setPendingDecisionType(null); setDecisionNote(''); }} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-700">Cancel</button><button type="button" onClick={() => { if (pendingDecisionType === 'direction_selected') handleSelectVersion(); else handleDecisionChange(pendingDecisionType); setPendingDecisionType(null); }} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Confirm</button></div></> : <div className="mt-4 flex flex-wrap gap-2">{isFeedbackGoal ? <button type="button" onClick={() => setPendingDecisionType('reviewed')} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Done reviewing</button> : isSelectionGoal ? <><button type="button" onClick={() => setPendingDecisionType('direction_selected')} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Confirm selection</button><button type="button" onClick={() => setPendingDecisionType('changes_requested')} className="rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">Request changes</button></> : <><button type="button" onClick={() => setPendingDecisionType('approved')} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Approve</button><button type="button" onClick={() => setPendingDecisionType('changes_requested')} className="rounded-[8px] border border-stone-300 px-3 py-2 text-sm font-semibold text-stone-700">Request changes</button></>}</div>}</> : null}
+        {isCreator ? (outcome ? <div className="mt-4 rounded-[10px] border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"><p className="font-semibold uppercase tracking-wide">{outcomeLabel}</p>{outcome.assetVersionId ? <p className="mt-1">Version: {selectedVersionLabel ?? 'Selected version'}</p> : null}{outcome.note ? <p className="mt-2 italic">“{outcome.note}”</p> : null}<p className="mt-2 text-xs text-emerald-800">{outcome.reviewerName ?? 'Reviewer'}{outcome.createdAt ? ` · ${new Date(outcome.createdAt).toLocaleDateString()}` : ''}</p></div> : <p className="mt-3 text-sm text-stone-600">Awaiting client decision.</p>) : null}
+        {!isCreator && !review.shareSettings.allowDecisions ? <p className="mt-3 text-sm text-stone-500">Decisions are disabled for this review.</p> : null}
+      </section>
+    );
+  };
+
+  const renderFeedbackRail = () => (
+    <aside className="flex min-h-0 flex-col items-center gap-2 border-t border-stone-200 bg-white p-2 lg:border-l lg:border-t-0">
+      <button
+        type="button"
+        onClick={() => {
+          openDrawerSection('discussion');
+        }}
+        aria-label="Open deliverable discussion"
+        aria-expanded={isFeedbackDrawerOpen && rightTab === 'notes'}
+        title="Deliverable discussion"
+        className={`relative flex h-11 w-11 items-center justify-center rounded-[10px] ${rightTab === 'notes' && isFeedbackDrawerOpen ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}
+      >
+        <FiMessageSquare aria-hidden="true" className="h-5 w-5" />
+        {openCommentCount > 0 ? <span className="absolute -right-1 -top-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">{openCommentCount}</span> : null}
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          openDrawerSection('decision');
+        }}
+        aria-label="Open decision progress and finish"
+        aria-expanded={isFeedbackDrawerOpen && rightTab === 'feedback'}
+        title="Decision, progress, finish"
+        className={`flex h-11 w-11 items-center justify-center rounded-[10px] ${rightTab === 'feedback' && isFeedbackDrawerOpen ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}
+      >
+        <FiCheckCircle aria-hidden="true" className="h-5 w-5" />
+      </button>
+      {isCreator ? (
+        <button type="button" onClick={() => setIsSettingsDialogOpen(true)} aria-label="Open creator settings" title="Creator settings" className="flex h-11 w-11 items-center justify-center rounded-[10px] bg-stone-100 text-stone-700 hover:bg-stone-200">
+          <FiSliders aria-hidden="true" className="h-5 w-5" />
+        </button>
+      ) : null}
+      <button type="button" onClick={() => setIsFeedbackDrawerOpen((current) => !current)} aria-label={isFeedbackDrawerOpen ? 'Close review drawer' : 'Open review drawer'} title={isFeedbackDrawerOpen ? 'Close drawer' : 'Open drawer'} className="mt-auto flex h-11 w-11 items-center justify-center rounded-[10px] border border-stone-200 text-stone-600 hover:bg-stone-50">
+        {isFeedbackDrawerOpen ? <FiChevronRight aria-hidden="true" className="h-5 w-5" /> : <FiChevronLeft aria-hidden="true" className="h-5 w-5" />}
+      </button>
+    </aside>
+  );
+
+  const renderShareMenu = () => (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setIsShareMenuOpen((current) => !current)}
+        className="inline-flex items-center gap-2 rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong"
+        aria-expanded={isShareMenuOpen}
+      >
+        Share
+        <FiChevronDown aria-hidden="true" className="h-4 w-4" />
+      </button>
+      {isShareMenuOpen ? (
+        <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-md border border-border bg-surface p-2 text-sm shadow-xl">
+          <button
+            type="button"
+            onClick={() => {
+              setIsShareMenuOpen(false);
+              void copyReviewLink();
+            }}
+            className="block w-full rounded-[8px] px-3 py-2 text-left font-semibold text-text hover:bg-surface-muted"
+          >
+            Copy review link
+          </button>
+          {review.shareToken ? (
+            <Link
+              href={`/review/${review.shareToken}`}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setIsShareMenuOpen(false)}
+              className="block rounded-[8px] px-3 py-2 font-semibold text-text hover:bg-surface-muted"
+            >
+              Open client view
+            </Link>
+          ) : null}
+          {isCreator ? <p className="px-3 py-2 text-xs leading-5 text-text-subtle">{shareSummary}</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  if (!isCreator && isReviewLoaded && review.id === 'shared-review-unavailable') {
+    return <main className="flex min-h-screen items-center justify-center bg-canvas px-4 text-text"><section className="w-full max-w-md rounded-[14px] border border-border bg-surface p-6 text-center shadow-sm"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-text-subtle">WizerView</p><h1 className="mt-3 text-xl font-semibold">This review is unavailable</h1><p className="mt-2 text-sm leading-6 text-text-muted">It may be a draft, closed to sharing, archived, or the link may be incorrect. Ask the creator for an updated link.</p><p className="mt-5 text-xs text-text-subtle">Reference: review-link-unavailable</p></section></main>;
+  }
 
   return (
     <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-canvas text-text">
+      {isCreator && isSettingsDialogOpen ? <div className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/45 px-4" onMouseDown={() => setIsSettingsDialogOpen(false)}><section role="dialog" aria-modal="true" aria-label="Review settings" onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-sm rounded-[14px] bg-white p-5 shadow-2xl"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold">Review settings</h2><button type="button" onClick={() => setIsSettingsDialogOpen(false)} aria-label="Close settings"><FiX /></button></div><label className="mt-4 block text-sm font-semibold">Review goal<select value={review.reviewGoal} onChange={(event) => setReview((current) => ({ ...current, reviewGoal: event.target.value as typeof current.reviewGoal }))} className="mt-2 w-full rounded-[8px] border border-stone-200 px-3 py-2 font-normal"><option value="approve_final">Approve final work</option><option value="select_version">Choose a preferred version</option><option value="feedback_only">Feedback only</option></select></label><div className="mt-4 space-y-2">{([{ key: 'reviewerNameRequired', label: 'Require reviewer name' }, { key: 'allowComments', label: 'Allow comments' }, { key: 'allowDecisions', label: 'Allow decisions' }] as const).map((setting) => <label key={setting.key} className="flex items-center justify-between rounded-[8px] bg-stone-50 px-3 py-2"><span>{setting.label}</span><input type="checkbox" checked={review.shareSettings[setting.key]} onChange={(event) => updateShareSetting(setting.key, event.target.checked)} /></label>)}<label className="flex items-center justify-between rounded-[8px] bg-stone-50 px-3 py-2"><span>Visible in shared project</span><input type="checkbox" checked={review.clientVisible} onChange={(event) => setReview((current) => ({ ...current, clientVisible: event.target.checked }))} /></label></div></section></div> : null}
+      {isVersionNameDialogOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/45 px-4" onMouseDown={() => setIsVersionNameDialogOpen(false)}>
+          <form onSubmit={(event) => { event.preventDefault(); saveVersionName(); }} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === 'Escape') setIsVersionNameDialogOpen(false); }} className="w-full max-w-sm rounded-[14px] border border-stone-200 bg-white p-5 shadow-2xl">
+            <h2 className="text-lg font-semibold text-stone-950">{versionNameMode === 'create' ? 'New Version' : 'Rename Version'}</h2>
+            <label className="mt-4 block text-sm font-semibold text-stone-800">
+              Version name
+              <input ref={versionNameInputRef} value={versionNameDraft} onChange={(event) => setVersionNameDraft(event.target.value)} placeholder={suggestedVersionName} className="mt-2 w-full rounded-[8px] border border-stone-200 px-3 py-2.5 text-sm font-normal text-stone-950 outline-none focus:border-stone-500" />
+            </label>
+            <p className="mt-2 text-sm leading-5 text-stone-500">Give this version a descriptive name. You can always rename it later.</p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setIsVersionNameDialogOpen(false)} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-100">Cancel</button>
+              <button type="submit" className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">{versionNameMode === 'create' ? 'Create Version' : 'Save name'}</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
       {showIdentityModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-950/70 px-4">
           <div className="w-full max-w-md rounded-lg border border-border bg-surface p-6 shadow-xl">
@@ -908,7 +1505,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               placeholder="Alex Morgan"
               className="mt-2 w-full rounded-md border border-border bg-surface-muted px-3 py-2.5 text-sm"
             />
-            <button type="button" onClick={handleNameSubmit} className="mt-5 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
+            <button type="button" onClick={() => void handleNameSubmit()} className="mt-5 rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
               Continue to review
             </button>
           </div>
@@ -918,7 +1515,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
       <header className="z-30 flex-none border-b border-border bg-surface/95 px-4 py-3 backdrop-blur lg:px-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
-            {isCreator ? <BrandLogo href="/dashboard" /> : null}
+            {isCreator ? <BrandLogo href="/dashboard" /> : authenticatedReviewer?.projectHref ? <Link href={authenticatedReviewer.projectHref} className="text-sm font-semibold text-text-muted">← Project</Link> : null}
             <span className="h-5 w-px bg-border" />
             <span className="text-xs font-semibold uppercase tracking-[0.22em] text-text-subtle">{isCreator ? 'Creator workspace' : 'Client review'}</span>
             <h1 className="min-w-0 text-sm font-semibold text-text sm:text-base">{review.title}</h1>
@@ -929,7 +1526,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             {isCreator ? (
               <>
                 <Link href={review.shareToken ? `/review/${review.shareToken}` : `/review/${review.id}`} target="_blank" rel="noreferrer" className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">Preview as client</Link>
-                <button type="button" onClick={() => void copyReviewLink()} className="rounded-md border border-border px-3 py-2 text-sm font-semibold text-text-muted hover:bg-surface-muted">Copy review link</button>
+                {renderShareMenu()}
                 <button type="button" onClick={handleSaveReview} disabled={isSaving || isCheckingAuth || (isSupabaseConfigured() && !authUser)} className="rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong disabled:cursor-not-allowed disabled:opacity-60">
                   {isSaving ? 'Saving...' : 'Save'}
                 </button>
@@ -937,31 +1534,65 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               </>
             ) : (
               <>
-                <div className="rounded-md bg-surface-muted px-3 py-2 text-sm text-text-muted">{review.client || 'Client'}</div>
-                <input value={reviewerName} onChange={(event) => setReviewerName(event.target.value)} placeholder="Your name" className="w-40 rounded-md border border-border bg-surface px-3 py-2 text-sm" />
+                <div className="rounded-md bg-surface-muted px-3 py-2 text-sm text-text-muted">{authenticatedReviewer ? `Reviewing as ${authenticatedReviewer.displayName || authenticatedReviewer.email}` : review.client || 'Client'}</div>
+                {!authenticatedReviewer ? <input value={reviewerName} onChange={(event) => setReviewerName(event.target.value)} placeholder="Your name" className="w-40 rounded-md border border-border bg-surface px-3 py-2 text-sm" /> : null}
+                {renderShareMenu()}
               </>
             )}
           </div>
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[156px_minmax(0,1fr)_360px]">
-        <aside className="flex min-h-0 flex-col border-b border-border bg-surface-muted/80 p-3 lg:border-b-0 lg:border-r">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-text-subtle">Assets</p>
-          <div className="mt-3 grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-1">
-            {review.assets.length ? review.assets.map(renderAssetRailButton) : (
-              <div className="rounded-md border border-dashed border-border-strong bg-surface p-3 text-xs leading-5 text-text-subtle">No assets in this review yet.</div>
-            )}
-          </div>
-          {isCreator ? (
-            <button type="button" onClick={addRelatedAsset} className="mt-3 flex w-full justify-center rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
-              Add asset
-            </button>
-          ) : null}
-          {uploadMessage ? <p className="mt-3 text-xs leading-5 text-text-subtle">{uploadMessage}</p> : null}
+      <div className={`grid min-h-0 flex-1 transition-[grid-template-columns] duration-200 ${isFeedbackDrawerOpen ? 'lg:grid-cols-[52px_minmax(0,1fr)_460px]' : 'lg:grid-cols-[156px_minmax(0,1fr)_64px]'}`}>
+        <aside className="relative flex min-h-0 flex-col border-b border-border bg-surface-muted/80 p-3 lg:border-b-0 lg:border-r">
+          {isFeedbackDrawerOpen ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setIsAssetPickerOpen((current) => !current)}
+                className="flex min-h-24 w-full items-center justify-center rounded-md border border-border bg-surface px-2 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted hover:bg-surface-muted [writing-mode:vertical-rl]"
+                aria-expanded={isAssetPickerOpen}
+                aria-label="Open deliverables picker"
+                title="Deliverables"
+              >
+                Deliverables
+              </button>
+              {isAssetPickerOpen ? (
+                <div className="absolute left-full top-3 z-40 ml-2 flex max-h-[calc(100vh-160px)] w-44 flex-col rounded-md border border-border bg-surface p-3 shadow-xl">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-text-subtle">Deliverables</p>
+                  <div className="mt-3 grid min-h-0 flex-1 auto-rows-max content-start gap-2 overflow-y-auto pr-1">
+                    {review.assets.length ? review.assets.map(renderAssetRailButton) : (
+                      <div className="rounded-md border border-dashed border-border-strong bg-surface p-3 text-xs leading-5 text-text-subtle">No deliverables in this review yet.</div>
+                    )}
+                  </div>
+                  {isCreator ? (
+                    <button type="button" onClick={addRelatedAsset} className="mt-3 flex w-full justify-center rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
+                      Add deliverable
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-text-subtle">Deliverables</p>
+              <div className="mt-3 grid min-h-0 flex-1 auto-rows-max content-start grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-1">
+                {review.assets.length ? review.assets.map(renderAssetRailButton) : (
+                  <div className="rounded-md border border-dashed border-border-strong bg-surface p-3 text-xs leading-5 text-text-subtle">No deliverables in this review yet.</div>
+                )}
+              </div>
+              {isCreator ? (
+                <button type="button" onClick={addRelatedAsset} className="mt-3 flex w-full justify-center rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong">
+                  Add deliverable
+                </button>
+              ) : null}
+            </>
+          )}
+          {uploadMessage && !isFeedbackDrawerOpen ? <p className="mt-3 text-xs leading-5 text-text-subtle">{uploadMessage}</p> : null}
         </aside>
 
-        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden px-4 py-4 lg:px-6">
+        <div className="relative min-h-0 min-w-0 overflow-hidden">
+        <section ref={centerScrollRef} onScroll={handleCenterScroll} className="flex h-full min-h-0 min-w-0 flex-col gap-4 overflow-auto px-4 py-4 lg:px-6">
           <input
             ref={fileInputRef}
             type="file"
@@ -970,8 +1601,10 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
             onChange={handleAssetUpload}
             disabled={isSupabaseConfigured() && !authUser}
           />
-          <div className="flex flex-none flex-col gap-3 border-b border-stone-200 pb-4 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold text-stone-950">{activeAsset?.title ?? 'Deliverable'}</h2>
+          {renderDeliverableBrief()}
+          <div className="sticky top-0 z-20 flex flex-none flex-col gap-3 border-b border-stone-200 bg-canvas/95 pb-4 pt-1 backdrop-blur xl:flex-row xl:items-center xl:justify-between">
+            <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto pb-1">
               {(activeAsset?.versions ?? []).map((version, index) => (
                 <button
                   key={version.id}
@@ -980,50 +1613,67 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                     setActiveVersionId(version.id);
                     setActiveCommentId(null);
                   }}
-                  className={`rounded-[8px] px-3 py-2 text-sm font-semibold ${activeVersion?.id === version.id ? 'bg-stone-950 text-white' : 'bg-white text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50'}`}
+                  className={`max-w-52 truncate rounded-[8px] px-3 py-2 text-sm font-semibold ${activeVersion?.id === version.id ? 'bg-stone-950 text-white' : 'bg-white text-stone-700 ring-1 ring-stone-200 hover:bg-stone-50'}`}
                 >
                   {version.label || versionLabel(index)}
                 </button>
               ))}
-              {isCreator ? (
+                  {isCreator ? (
                 <>
-                  <button type="button" onClick={addVersion} className="rounded-[8px] border border-dashed border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">+ Add version</button>
+                  <button type="button" onClick={openCreateVersionDialog} className="rounded-[8px] border border-dashed border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">+ Add version</button>
                   {hasMultipleVersions ? (
-                    <button type="button" onClick={() => void handleDeleteVersion()} disabled={!activeVersion} className="rounded-[8px] border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">Delete version</button>
+                    <button type="button" onClick={() => void handleDeleteVersion()} disabled={!activeVersion} aria-label="Delete active version" title="Delete active version" className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50">
+                      <FiTrash2 aria-hidden="true" className="h-4 w-4" />
+                    </button>
                   ) : null}
                 </>
               ) : null}
             </div>
-            <p className="text-sm text-stone-500">{isCreator || review.shareSettings.allowComments ? 'Click the preview to add a pinned note.' : 'Pinned notes are disabled for this review.'}</p>
-          </div>
-
-          <div className="mt-5 flex min-h-0 flex-1 flex-col">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-stone-950">{activeVersion?.label ?? versionLabel(activeVersionIndex)}</p>
-                <p className="text-sm text-stone-600">{activeAsset?.description ?? 'A preview-ready surface for the reviewer.'}</p>
-              </div>
-              {!isCreator ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  {hasMultipleVersions ? (
-                    <button type="button" onClick={handleSelectVersion} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">Select this version</button>
-                  ) : null}
-                  {activeVersionHasPreview ? (
-                    <button
-                      type="button"
-                      onClick={downloadActivePreview}
-                      className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] border border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
-                      aria-label="Download active preview"
-                      title="Download active preview"
-                    >
-                      <FiDownload aria-hidden="true" className="h-4 w-4" />
-                    </button>
-                  ) : null}
+            <div className="relative flex flex-wrap items-center gap-2">
+              {activeVersionHasPreview ? <label className="flex items-center gap-2 rounded-[8px] border border-stone-200 bg-white px-2 py-1 text-xs font-semibold text-stone-700">Zoom<select value={previewZoom} onChange={(event) => setPreviewZoom(event.target.value as typeof previewZoom)} className="bg-transparent py-1 text-sm font-semibold outline-none">{zoomOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label> : null}
+              {!isCreator && hasMultipleVersions ? (
+                <button type="button" onClick={handleSelectVersion} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">Select this version</button>
+              ) : null}
+              {activeVersionHasPreview ? (
+                <button
+                  type="button"
+                  onClick={downloadActivePreview}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] border border-stone-200 bg-white text-stone-700 hover:bg-stone-50"
+                  aria-label="Download active preview"
+                  title="Download active preview"
+                >
+                  <FiDownload aria-hidden="true" className="h-4 w-4" />
+                </button>
+              ) : null}
+              <button type="button" onClick={() => setIsVersionMenuOpen((current) => !current)} className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] border border-stone-200 bg-white text-stone-700 hover:bg-stone-50" aria-label="Version options" title="Version options">
+                <FiChevronDown aria-hidden="true" className="h-4 w-4" />
+              </button>
+              {isVersionMenuOpen ? (
+                <div className="absolute right-0 top-12 z-30 w-72 rounded-[10px] border border-stone-200 bg-white p-3 text-sm shadow-xl">
+                  <p className="font-semibold text-stone-950">{activeVersion?.label ?? 'Version'}</p>
+                  {isCreator ? <button type="button" onClick={openRenameVersionDialog} className="mt-3 w-full rounded-[8px] border border-stone-200 px-3 py-2 text-left text-sm font-semibold text-stone-700 hover:bg-stone-50">Rename version</button> : null}
                 </div>
               ) : null}
             </div>
+          </div>
 
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-[14px] border border-stone-200 bg-white/75 p-3 shadow-sm">
+          {typeof activeVersion?.metadata?.description === 'string' && activeVersion.metadata.description ? <section className="rounded-[10px] border border-stone-200 bg-white px-4 py-3"><div className="flex items-start justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Version description</p><p className="mt-2 text-sm leading-6 text-stone-700">{activeVersion.metadata.description}</p></div>{isCreator ? <button type="button" onClick={() => { setVersionDescriptionDraft(activeVersion.metadata?.description as string); setIsEditingVersionDescription(true); }} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700">Edit</button> : null}</div></section> : isCreator ? <button type="button" onClick={() => { setVersionDescriptionDraft(''); setIsEditingVersionDescription(true); }} className="w-fit text-sm font-semibold text-stone-600 hover:text-stone-950">Add version description</button> : null}
+          {isEditingVersionDescription ? <section className="rounded-[10px] border border-stone-200 bg-white p-4"><p className="text-xs font-semibold uppercase tracking-[0.2em] text-stone-500">Version description</p><textarea value={versionDescriptionDraft} onChange={(event) => setVersionDescriptionDraft(event.target.value)} className="mt-3 min-h-20 w-full rounded-[8px] border border-stone-200 px-3 py-2 text-sm" /><div className="mt-3 flex gap-2"><button type="button" onClick={() => setIsEditingVersionDescription(false)} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-700">Cancel</button><button type="button" onClick={saveVersionDescription} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save description</button></div></section> : null}
+          <p className="text-sm text-stone-500">{isCreator || review.shareSettings.allowComments ? 'Click anywhere on the preview to add a pinned comment.' : 'Deliverable discussion is disabled for this review.'}</p>
+
+          <div className="flex min-h-[calc(100vh-220px)] flex-col pb-10">
+            <div className="relative flex-1">
+              {activeVersionHasPreview && (isCreator || review.shareSettings.allowComments) ? (
+                <div className="sticky top-20 z-10 flex justify-end pr-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowPins((current) => !current)}
+                    className="rounded-[8px] border border-stone-200 bg-white/95 px-3 py-1.5 text-xs font-semibold text-stone-700 shadow-sm hover:bg-stone-50"
+                  >
+                    {showPins ? 'Hide pins' : 'Show pins'}
+                  </button>
+                </div>
+              ) : null}
               {activeAsset ? (
                 <>
                   {isCreator && activeVersion && !activeVersionHasPreview ? (
@@ -1069,19 +1719,23 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                   ) : (
                     <AssetSurface
                       asset={activeAsset}
-                      version={activeVersion}
+                      version={displayVersion}
                       scrollContainerRef={previewScrollRef}
+                      zoom={previewScale}
                       overlay={activeVersionHasPreview && showPins && (isCreator || review.shareSettings.allowComments) ? (
                         <PinCommentLayer
                           asset={activeAsset}
                           version={activeVersion}
                           comments={review.comments}
                           onAddComment={handleAddComment}
+                          pageNumber={activeAsset.assetType === 'pdf' ? activePdfPage : undefined}
                           activeCommentId={activeCommentId}
                           onSelectComment={(commentId) => {
                             setActiveCommentId(commentId);
                             setCommentFilter('all');
+                            setOriginFilter('all');
                             setRightTab('notes');
+                            setIsFeedbackDrawerOpen(true);
                           }}
                         />
                       ) : null}
@@ -1090,7 +1744,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                 </>
               ) : (
                 <div className="flex min-h-[440px] items-center justify-center rounded-[12px] border border-dashed border-stone-300 bg-stone-50 text-center">
-                  <p className="max-w-[240px] text-sm text-stone-600">This review has no assets yet.</p>
+                  <p className="max-w-[240px] text-sm text-stone-600">This review has no deliverables yet.</p>
                 </div>
               )}
             </div>
@@ -1104,10 +1758,58 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                 ))}
               </div>
             ) : null}
+            {isPdfProcessing ? <button type="button" onClick={() => pdfAbortControllerRef.current?.abort()} className="mt-3 rounded-[8px] border border-stone-300 bg-white px-3 py-2 text-sm font-semibold text-stone-700">Cancel PDF processing</button> : null}
+            {renderOutcomePanel()}
           </div>
         </section>
+        </div>
 
-        <aside className="flex min-h-0 flex-col overflow-hidden border-t border-stone-200 bg-white p-4 lg:border-l lg:border-t-0">
+        <aside
+          ref={feedbackDrawerRef}
+          className={`${isFeedbackDrawerOpen ? 'fixed inset-x-0 bottom-0 top-16 z-40 flex lg:static lg:inset-auto lg:z-auto' : 'hidden'} min-h-0 flex-col overflow-y-auto border-l border-stone-200 bg-white p-4 shadow-xl`}
+          aria-hidden={!isFeedbackDrawerOpen}
+        >
+          <div className="flex items-center justify-between gap-3 border-b border-stone-200 pb-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Review drawer</p>
+              <p className="mt-1 text-sm font-semibold text-stone-950">Discussion to decision</p>
+            </div>
+            <button type="button" onClick={() => { setIsFeedbackDrawerOpen(false); setIsAssetPickerOpen(false); }} className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-stone-200 text-stone-600 hover:bg-stone-50" aria-label="Close review drawer">
+              <FiX aria-hidden="true" className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="mt-4 space-y-4">{renderNotesPanel()}</div>
+          {isCreator ? (
+            <section className="hidden" aria-hidden="true">
+              <p className="text-sm font-semibold text-stone-950">Creator settings</p>
+              <div className="mt-3 grid gap-2">
+                {[
+                  { key: 'reviewerNameRequired' as const, label: 'Name required' },
+                  { key: 'allowComments' as const, label: 'Allow comments' },
+                  { key: 'allowDecisions' as const, label: 'Allow decisions' },
+                ].map((setting) => (
+                  <label key={setting.key} className="flex items-center justify-between rounded-[10px] bg-stone-50 px-3 py-2.5 text-sm text-stone-700">
+                    <span>{setting.label}</span>
+                    <input type="checkbox" checked={review.shareSettings[setting.key]} onChange={(event) => updateShareSetting(setting.key, event.target.checked)} className="h-4 w-4 rounded border-stone-300 text-stone-900" />
+                  </label>
+                ))}
+              </div>
+              <p className="mt-3 text-xs leading-5 text-stone-500">{shareSummary}</p>
+              {authUser ? (
+                <button type="button" onClick={handleSignOut} className="mt-3 rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700">Log out</button>
+              ) : (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => openAuthModal('login')} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-50">
+                    Sign in
+                  </button>
+                  <button type="button" onClick={() => openAuthModal('signup')} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800">
+                    Create account
+                  </button>
+                </div>
+              )}
+            </section>
+          ) : null}
+          <div className="hidden">
           <div className="flex rounded-[10px] bg-stone-100 p-1">
             {[
               { key: 'notes' as const, label: 'Pinned notes' },
@@ -1229,7 +1931,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
                     ))}
                   </div>
                   {commentsOutsideActiveVersion.length > 4 ? (
-                    <p className="mt-2 text-xs text-stone-500">+{commentsOutsideActiveVersion.length - 4} more on other assets or versions.</p>
+                    <p className="mt-2 text-xs text-stone-500">+{commentsOutsideActiveVersion.length - 4} more on other deliverables or versions.</p>
                   ) : null}
                 </div>
               ) : null}
@@ -1295,34 +1997,11 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview }: R
               )}
             </div>
           ) : null}
+          </div>
         </aside>
+        {!isFeedbackDrawerOpen ? renderFeedbackRail() : null}
       </div>
 
-      <footer className="flex flex-none flex-wrap items-center justify-between gap-3 border-t border-stone-200 bg-white px-4 py-3 text-sm text-stone-600 lg:px-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <span>{totalComments} comments</span>
-          <button type="button" onClick={() => setShowPins((current) => !current)} className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">{showPins ? 'Hide pins' : 'Show pins'}</button>
-          <span className="rounded-[8px] bg-stone-100 px-3 py-1.5">Zoom 100%</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {isCreator ? (
-            <>
-              <button type="button" onClick={addVersion} className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">New version</button>
-              <button type="button" onClick={() => void copyReviewLink()} className="rounded-[8px] bg-stone-950 px-3 py-1.5 font-semibold text-white">Share</button>
-            </>
-          ) : (
-            <>
-              {review.shareSettings.allowComments ? <button type="button" onClick={() => setRightTab('feedback')} className="rounded-[8px] border border-stone-200 px-3 py-1.5 font-semibold text-stone-700">Add general comment</button> : null}
-              <button type="button" onClick={() => void copyReviewLink()} className="rounded-[8px] bg-stone-950 px-3 py-1.5 font-semibold text-white">Share review link</button>
-            </>
-          )}
-        </div>
-        {!isCreator ? (
-          <Link href="/" className="text-xs font-semibold text-text-subtle hover:text-brand">
-            Reviewed with WizerView
-          </Link>
-        ) : null}
-      </footer>
       <Suspense fallback={null}>
         <AuthModal defaultNext={pathname || '/dashboard'} />
       </Suspense>

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { ProtectedRoute } from '@/components/app-shell/protected-route';
-import { ReviewDashboard } from '@/components/review-dashboard';
+import { ProjectsDashboard } from '@/components/projects-dashboard';
 
 export const metadata: Metadata = {
   title: 'Dashboard — WizerView',
@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 export default function DashboardPage() {
   return (
     <ProtectedRoute>
-      <ReviewDashboard />
+      <ProjectsDashboard />
     </ProtectedRoute>
   );
 }

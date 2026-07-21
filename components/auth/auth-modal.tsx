@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { createSupabaseClientInstance } from '@/lib/supabase';
 
@@ -19,6 +20,10 @@ function authAction(mode: AuthMode) {
   return mode === 'signup' ? 'Create account' : 'Sign in';
 }
 
+function safeInternalPath(value: string) {
+  return value.startsWith('/') && !value.startsWith('//') ? value : '/dashboard';
+}
+
 export function AuthModal({ embeddedMode, defaultNext = '/dashboard' }: AuthModalProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -27,7 +32,7 @@ export function AuthModal({ embeddedMode, defaultNext = '/dashboard' }: AuthModa
   const queryMode = searchParams.get('auth');
   const requestedMode = embeddedMode ?? (queryMode === 'signup' ? 'signup' : 'login');
   const isOpen = Boolean(embeddedMode || queryMode === 'signup' || queryMode === 'login');
-  const next = searchParams.get('next') || defaultNext;
+  const next = safeInternalPath(searchParams.get('next') || defaultNext);
   const [mode, setMode] = useState<AuthMode>(requestedMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -70,7 +75,7 @@ export function AuthModal({ embeddedMode, defaultNext = '/dashboard' }: AuthModa
           email,
           password,
           options: {
-            emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/login?next=${encodeURIComponent(next || '/dashboard')}` : undefined,
+            emailRedirectTo: typeof window !== 'undefined' ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}` : undefined,
           },
         })
       : await supabase.auth.signInWithPassword({ email, password });
@@ -140,6 +145,7 @@ export function AuthModal({ embeddedMode, defaultNext = '/dashboard' }: AuthModa
           {isSending ? 'Sending...' : authAction(mode)}
         </button>
         {message ? <p className="mt-3 text-sm leading-6 text-text-muted">{message}</p> : null}
+        {mode === 'login' ? <p className="mt-3 text-right text-sm"><Link href="/reset-password" className="font-semibold text-brand hover:text-brand-strong">Forgot password?</Link></p> : null}
         <p className="mt-4 text-center text-sm text-text-muted">
           {mode === 'signup' ? 'Already have an account?' : 'New to WizerView?'}{' '}
           <button type="button" onClick={() => switchMode(mode === 'signup' ? 'login' : 'signup')} className="font-semibold text-brand hover:text-brand-strong">

@@ -2,7 +2,7 @@
 
 WizerView is a lightweight client review and approval tool for freelancers and small creative teams.
 
-It helps creators send one visual review link where clients can compare asset versions, leave pinned feedback on the exact version, and approve or request changes without creating an account.
+It helps creators organize client work into Projects and focused Reviews, where clients can compare Deliverable versions, leave pinned feedback on the exact work, and submit a clear outcome without creating an account.
 
 ## Core Positioning
 
@@ -10,7 +10,7 @@ Send clients one visual review link. Compare versions, collect clear feedback, a
 
 ## Product Principle
 
-Everything is centered around the asset, not the conversation.
+Everything is centered around the deliverable, not the conversation.
 
 WizerView is not a generic project management tool. The work itself is the center of the review. Comments, replies, choices, and approvals stay attached to the asset, version, or review they refer to.
 
@@ -18,16 +18,15 @@ WizerView is not a generic project management tool. The work itself is the cente
 
 The first prototype should focus on:
 
-- Creating a review before requiring project structure.
-- Organizing reviews around assets and versions.
-- Supporting asset-specific version comparison.
-- Uploading visual assets: images, screenshots, and PDFs.
+- Organizing client engagements as Project → Review → Deliverable → Version.
+- Supporting deliverable-specific version comparison.
+- Uploading visual deliverables: images, screenshots, and PDFs.
 - Displaying PDFs as page-based review surfaces.
-- Adding simple pinned comments to visual assets.
-- Collecting version-specific pinned feedback and overall review feedback.
+- Adding simple pinned comments to visual deliverables.
+- Collecting version-specific pinned feedback and a deliverable Decision Note.
 - Requiring reviewer name before comments or decisions.
 - Supporting optional PIN protection later.
-- Letting the reviewer approve, request changes, or select a direction.
+- Letting the reviewer approve, request changes, select a direction, or mark work reviewed according to the Review goal.
 
 Text assets, live website embedding, automatic URL screenshots, billing, teams, integrations, AI, and advanced version comparison are not part of the first prototype.
 
@@ -46,9 +45,8 @@ Text assets, live website embedding, automatic URL screenshots, billing, teams, 
 To connect the prototype to Supabase, copy [.env.local.example](.env.local.example) to .env.local and add your project URL and anon key. The app will use Supabase when those values are present, and fall back to the built-in mock data otherwise.
 
 The prototype includes:
-- a dashboard of recent reviews
-- a review builder with share settings and section creation
-- a client-facing review experience with pinned comments, feedback, and decision actions
+- a project-first creator dashboard with nested Reviews
+- a client-facing Review and Project experience with pinned comments and deliverable decisions
 
 ## Documentation
 
