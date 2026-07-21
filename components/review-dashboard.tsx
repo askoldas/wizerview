@@ -6,7 +6,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { AuthModal } from '@/components/auth/auth-modal';
 import { BrandLogo } from '@/components/brand-logo';
-import { deleteReview, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
+import { deleteReview, getReviewShareToken, listReviews, markReviewSeen, type ReviewSummary } from '@/lib/review-service';
 import { createSupabaseClientInstance } from '@/lib/supabase';
 
 function getInitials(email?: string | null) {
@@ -155,12 +155,16 @@ export function ReviewDashboard() {
   };
 
   const copyReviewLink = async (review: ReviewSummary) => {
-    if (!review.shareToken) {
-      setMessage('No share token is available for this review.');
+    let shareToken: string | null;
+    try {
+      shareToken = await getReviewShareToken(review.id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not prepare the review link.');
       return;
     }
+    if (!shareToken) { setMessage('No share token is available for this review.'); return; }
 
-    const shareLink = typeof window !== 'undefined' ? `${window.location.origin}/review/${review.shareToken}` : `/review/${review.shareToken}`;
+    const shareLink = typeof window !== 'undefined' ? `${window.location.origin}/review/${shareToken}` : `/review/${shareToken}`;
 
     if (typeof navigator === 'undefined' || !navigator.clipboard) {
       setMessage(shareLink);
