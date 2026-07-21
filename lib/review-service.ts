@@ -961,15 +961,32 @@ export async function getReviewShareToken(reviewId: string): Promise<string | nu
   const client = createSupabaseClientInstance();
   if (!client) return null;
 
+  const { data: currentReview, error: readError } = await client
+    .from(REVIEW_TABLE)
+    .select('status')
+    .eq('id', reviewId)
+    .maybeSingle();
+
+  if (readError || !currentReview) {
+    throw new Error(`Failed to prepare review share link: ${readError?.message ?? 'Review not found'}`);
+  }
+
   const { data, error } = await client
     .from(REVIEW_TABLE)
-    .select('share_token')
+    .update({
+      standalone_sharing_enabled: true,
+      sharing_enabled: true,
+      lifecycle: 'open',
+      ...(currentReview.status === 'draft' ? { status: 'in_review' } : {}),
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', reviewId)
+    .select('share_token')
     .maybeSingle();
 
   if (error) {
     console.error('Failed to load review share token from Supabase:', error.message);
-    throw new Error(`Failed to load review share token: ${error.message}`);
+    throw new Error(`Failed to prepare review share link: ${error.message}`);
   }
 
   return data?.share_token ?? null;

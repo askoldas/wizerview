@@ -133,6 +133,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
   const [isVersionMenuOpen, setIsVersionMenuOpen] = useState(false);
   const [isVersionNameDialogOpen, setIsVersionNameDialogOpen] = useState(false);
+  const [isAssetNameDialogOpen, setIsAssetNameDialogOpen] = useState(false);
+  const [assetNameDraft, setAssetNameDraft] = useState('');
   const [versionNameMode, setVersionNameMode] = useState<'create' | 'rename'>('create');
   const [versionNameDraft, setVersionNameDraft] = useState('');
   const [isElsewhereOpen, setIsElsewhereOpen] = useState(true);
@@ -168,6 +170,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const versionNameInputRef = useRef<HTMLInputElement | null>(null);
+  const assetNameInputRef = useRef<HTMLInputElement | null>(null);
   const centerScrollRef = useRef<HTMLDivElement | null>(null);
   const feedbackDrawerRef = useRef<HTMLDivElement | null>(null);
   const discussionSectionRef = useRef<HTMLElement | null>(null);
@@ -250,6 +253,10 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   useEffect(() => {
     if (isVersionNameDialogOpen) window.requestAnimationFrame(() => versionNameInputRef.current?.focus());
   }, [isVersionNameDialogOpen]);
+
+  useEffect(() => {
+    if (isAssetNameDialogOpen) window.requestAnimationFrame(() => assetNameInputRef.current?.focus());
+  }, [isAssetNameDialogOpen]);
 
   useEffect(() => {
     const nextObjectUrls = collectObjectUrls(review);
@@ -472,10 +479,13 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   const copyReviewLink = async () => {
     let token = review.shareToken ?? null;
 
-    if (!token && isCreator) {
-      token = await getReviewShareToken(review.id);
-      if (token) {
-        setReview((current) => ({ ...current, shareToken: token ?? undefined }));
+    if (isCreator) {
+      try {
+        token = await getReviewShareToken(review.id);
+        if (token) setReview((current) => ({ ...current, shareToken: token ?? undefined }));
+      } catch (error) {
+        setSaveMessage(error instanceof Error ? error.message : 'Could not prepare the review link.');
+        return;
       }
     }
 
@@ -571,7 +581,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
         asset.id === activeAsset.id
           ? {
               ...asset,
-              title: asset.title === 'Primary deliverable' ? file.name.replace(/\.[^.]+$/, '') : asset.title,
+              title: ['Primary deliverable', 'Related deliverable'].includes(asset.title) ? file.name.replace(/\.[^.]+$/, '') : asset.title,
               assetType: file.type === 'application/pdf' ? 'pdf' : asset.assetType,
               versions: asset.versions.map((version) => (version.id === activeVersion.id ? pendingVersion : version)),
             }
@@ -618,7 +628,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
           asset.id === activeAsset.id
             ? {
                 ...asset,
-                title: asset.title === 'Primary deliverable' ? processed.originalName.replace(/\.[^.]+$/, '') : asset.title,
+                title: ['Primary deliverable', 'Related deliverable'].includes(asset.title) ? processed.originalName.replace(/\.[^.]+$/, '') : asset.title,
                 // The deliverable description is its creator-written Brief. Processing details
                 // stay on the version, never in client-facing deliverable context.
                 assetType: processed.kind === 'pdf' ? 'pdf' : 'screenshot',
@@ -741,6 +751,24 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
     setActiveVersionId(newVersion.id);
     setActiveCommentId(null);
     setIsVersionNameDialogOpen(false);
+  };
+
+  const openRenameAssetDialog = (asset: ReviewAsset) => {
+    setActiveAssetId(asset.id);
+    setAssetNameDraft(asset.title);
+    setIsAssetPickerOpen(false);
+    setIsAssetNameDialogOpen(true);
+  };
+
+  const saveAssetName = () => {
+    if (!activeAsset) return;
+    const displayName = assetNameDraft.trim();
+    if (!displayName) return;
+    setReview((current) => ({
+      ...current,
+      assets: current.assets.map((asset) => asset.id === activeAsset.id ? { ...asset, title: displayName } : asset),
+    }));
+    setIsAssetNameDialogOpen(false);
   };
 
   const addRelatedAsset = () => {
@@ -1099,23 +1127,18 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
         </div>
         <div className="mt-2 flex items-start justify-between gap-2">
           <span className="text-xs font-semibold leading-4 text-text">{asset.title}</span>
-          {isCreator ? <span className="text-text-subtle">...</span> : null}
         </div>
         {outcomeLabel ? <span className="mt-1 block text-[11px] font-semibold text-emerald-700">{outcomeLabel}</span> : null}
       </button>
       {isCreator ? (
-        <button
-          type="button"
-          aria-label={`Delete ${asset.title}`}
-          title="Delete deliverable"
-          onClick={(event) => {
-            event.stopPropagation();
-            void handleDeleteAsset(asset);
-          }}
-          className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-rose-700 shadow-sm ring-1 ring-rose-100 transition hover:bg-rose-50"
-        >
-          <FiTrash2 aria-hidden="true" className="h-4 w-4" />
-        </button>
+        <div className="absolute right-3 top-3 flex gap-1">
+          <button type="button" aria-label={`Rename ${asset.title}`} title="Rename deliverable" onClick={(event) => { event.stopPropagation(); openRenameAssetDialog(asset); }} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-stone-700 shadow-sm ring-1 ring-stone-200 transition hover:bg-stone-50">
+            <FiEdit3 aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+          <button type="button" aria-label={`Delete ${asset.title}`} title="Delete deliverable" onClick={(event) => { event.stopPropagation(); void handleDeleteAsset(asset); }} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/95 text-rose-700 shadow-sm ring-1 ring-rose-100 transition hover:bg-rose-50">
+            <FiTrash2 aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
       ) : null}
     </article>
     );
@@ -1468,6 +1491,16 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   return (
     <main className="flex h-screen min-h-0 flex-col overflow-hidden bg-canvas text-text">
       {isCreator && isSettingsDialogOpen ? <div className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/45 px-4" onMouseDown={() => setIsSettingsDialogOpen(false)}><section role="dialog" aria-modal="true" aria-label="Review settings" onMouseDown={(event) => event.stopPropagation()} className="w-full max-w-sm rounded-[14px] bg-white p-5 shadow-2xl"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold">Review settings</h2><button type="button" onClick={() => setIsSettingsDialogOpen(false)} aria-label="Close settings"><FiX /></button></div><label className="mt-4 block text-sm font-semibold">Review goal<select value={review.reviewGoal} onChange={(event) => setReview((current) => ({ ...current, reviewGoal: event.target.value as typeof current.reviewGoal }))} className="mt-2 w-full rounded-[8px] border border-stone-200 px-3 py-2 font-normal"><option value="approve_final">Approve final work</option><option value="select_version">Choose a preferred version</option><option value="feedback_only">Feedback only</option></select></label><div className="mt-4 space-y-2">{([{ key: 'reviewerNameRequired', label: 'Require reviewer name' }, { key: 'allowComments', label: 'Allow comments' }, { key: 'allowDecisions', label: 'Allow decisions' }] as const).map((setting) => <label key={setting.key} className="flex items-center justify-between rounded-[8px] bg-stone-50 px-3 py-2"><span>{setting.label}</span><input type="checkbox" checked={review.shareSettings[setting.key]} onChange={(event) => updateShareSetting(setting.key, event.target.checked)} /></label>)}<label className="flex items-center justify-between rounded-[8px] bg-stone-50 px-3 py-2"><span>Visible in shared project</span><input type="checkbox" checked={review.clientVisible} onChange={(event) => setReview((current) => ({ ...current, clientVisible: event.target.checked }))} /></label></div></section></div> : null}
+      {isAssetNameDialogOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/45 px-4" onMouseDown={() => setIsAssetNameDialogOpen(false)}>
+          <form onSubmit={(event) => { event.preventDefault(); saveAssetName(); }} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === 'Escape') setIsAssetNameDialogOpen(false); }} className="w-full max-w-sm rounded-[14px] border border-stone-200 bg-white p-5 shadow-2xl">
+            <h2 className="text-lg font-semibold text-stone-950">Rename Deliverable</h2>
+            <label className="mt-4 block text-sm font-semibold text-stone-800">Deliverable name<input ref={assetNameInputRef} required value={assetNameDraft} onChange={(event) => setAssetNameDraft(event.target.value)} className="mt-2 w-full rounded-[8px] border border-stone-200 px-3 py-2.5 text-sm font-normal text-stone-950 outline-none focus:border-stone-500" /></label>
+            <p className="mt-2 text-sm leading-5 text-stone-500">This is the name your client sees. The original file name is kept separately.</p>
+            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setIsAssetNameDialogOpen(false)} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-700 hover:bg-stone-100">Cancel</button><button type="submit" disabled={!assetNameDraft.trim()} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white hover:bg-stone-800 disabled:opacity-50">Save name</button></div>
+          </form>
+        </div>
+      ) : null}
       {isVersionNameDialogOpen ? (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-stone-950/45 px-4" onMouseDown={() => setIsVersionNameDialogOpen(false)}>
           <form onSubmit={(event) => { event.preventDefault(); saveVersionName(); }} onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === 'Escape') setIsVersionNameDialogOpen(false); }} className="w-full max-w-sm rounded-[14px] border border-stone-200 bg-white p-5 shadow-2xl">
