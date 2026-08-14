@@ -1469,7 +1469,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
           </button>
           {review.shareToken ? (
             <Link
-              href={`/review/${review.shareToken}`}
+              href={`/review/${review.shareToken}?preview=client`}
               target="_blank"
               rel="noreferrer"
               onClick={() => setIsShareMenuOpen(false)}
