@@ -130,7 +130,6 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [showPins, setShowPins] = useState(true);
   const [isFeedbackDrawerOpen, setIsFeedbackDrawerOpen] = useState(true);
-  const [isAssetPickerOpen, setIsAssetPickerOpen] = useState(false);
   const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
   const [isVersionMenuOpen, setIsVersionMenuOpen] = useState(false);
   const [isVersionNameDialogOpen, setIsVersionNameDialogOpen] = useState(false);
@@ -802,7 +801,6 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   const openRenameAssetDialog = (asset: ReviewAsset) => {
     setActiveAssetId(asset.id);
     setAssetNameDraft(asset.title);
-    setIsAssetPickerOpen(false);
     setIsAssetNameDialogOpen(true);
   };
 
@@ -1112,7 +1110,6 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
 
   const openDrawerSection = (section: 'discussion' | 'decision') => {
     setIsFeedbackDrawerOpen(true);
-    setIsAssetPickerOpen(false);
     setRightPanel(section === 'discussion' ? 'discussion' : 'review');
     setRightTab(section === 'discussion' ? 'notes' : 'feedback');
     const target = {
@@ -1160,7 +1157,6 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
           setActiveVersionId(asset.versions[0]?.id ?? '');
           setActiveCommentId(null);
           setIsEditingVersionDescription(false);
-          setIsAssetPickerOpen(false);
         }}
         className="block w-full text-left"
       >
@@ -1652,21 +1648,12 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
         <aside className={`relative flex min-h-0 flex-col overflow-hidden border-b border-border bg-surface-muted/80 p-3 lg:fixed lg:bottom-0 lg:left-0 lg:top-[var(--review-shell-top)] lg:z-30 lg:border-b-0 lg:border-r ${isFeedbackDrawerOpen ? 'lg:w-[52px]' : 'lg:w-[156px]'}`}>
           {isFeedbackDrawerOpen ? (
             <>
-              <button type="button" onClick={() => setIsAssetPickerOpen((current) => !current)} className="flex min-h-24 w-full items-center justify-center rounded-md border border-border bg-surface px-2 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted hover:bg-surface-muted [writing-mode:vertical-rl]" aria-expanded={isAssetPickerOpen} aria-label="Open deliverables picker" title="Deliverables">Deliverables</button>
-              {isAssetPickerOpen ? (
-                <div className="absolute left-full top-3 z-40 ml-2 flex max-h-[calc(100vh-93px)] w-44 flex-col rounded-md border border-border bg-surface p-3 shadow-xl">
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-text-subtle">Deliverables</p>
-                  <div className="mt-3 grid min-h-0 flex-1 auto-rows-max content-start gap-2 overflow-y-auto pr-1">
-                    {review.assets.length ? review.assets.map(renderAssetRailButton) : <div className="rounded-md border border-dashed border-border-strong bg-surface p-3 text-xs leading-5 text-text-subtle">No deliverables in this review yet.</div>}
-                  </div>
-                  {isCreator ? <button type="button" onClick={addRelatedAsset} className="mt-3 flex w-full justify-center rounded-md bg-brand px-3 py-2 text-sm font-semibold text-white hover:bg-brand-strong">Add deliverable</button> : null}
-                </div>
-              ) : null}
+              <button type="button" onClick={() => setIsFeedbackDrawerOpen(false)} className="flex min-h-24 w-full items-center justify-center rounded-md border border-border bg-surface px-2 py-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted hover:bg-surface-muted [writing-mode:vertical-rl]" aria-expanded={false} aria-label="Expand deliverables drawer" title="Expand Deliverables">Deliverables</button>
               {isCreator ? <button type="button" onClick={addRelatedAsset} className="mt-auto flex h-9 w-full items-center justify-center rounded-md bg-brand text-lg font-semibold text-white hover:bg-brand-strong" aria-label="Add deliverable" title="Add deliverable">+</button> : null}
             </>
           ) : (
             <>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-text-subtle">Deliverables</p>
+              <button type="button" onClick={() => setIsFeedbackDrawerOpen(true)} className="flex w-full items-center justify-between gap-2 text-left text-[11px] font-semibold uppercase tracking-[0.24em] text-text-subtle hover:text-text" aria-expanded={true} aria-label="Collapse deliverables drawer" title="Collapse Deliverables"><span>Deliverables</span><FiChevronLeft aria-hidden="true" className="h-4 w-4 flex-none" /></button>
               <div className="mt-3 grid min-h-0 flex-1 auto-rows-max content-start grid-cols-2 gap-2 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-1">
                 {review.assets.length ? review.assets.map(renderAssetRailButton) : <div className="rounded-md border border-dashed border-border-strong bg-surface p-3 text-xs leading-5 text-text-subtle">No deliverables in this review yet.</div>}
               </div>
@@ -1838,7 +1825,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">{rightPanel}</p>
               <p className="mt-1 text-sm font-semibold text-stone-950">{activeAsset?.title ?? review.title}</p>
             </div>
-            <button type="button" onClick={() => { setIsFeedbackDrawerOpen(false); setIsAssetPickerOpen(false); }} className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-stone-200 text-stone-600 hover:bg-stone-50" aria-label="Close review drawer">
+            <button type="button" onClick={() => setIsFeedbackDrawerOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-stone-200 text-stone-600 hover:bg-stone-50" aria-label="Close review drawer">
               <FiX aria-hidden="true" className="h-4 w-4" />
             </button>
           </div>
