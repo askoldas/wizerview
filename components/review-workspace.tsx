@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { FiCheckCircle, FiChevronDown, FiChevronLeft, FiChevronRight, FiClipboard, FiDownload, FiEdit3, FiFileText, FiMessageSquare, FiMoreHorizontal, FiSliders, FiTrash2, FiUploadCloud, FiX } from 'react-icons/fi';
+import { FiCheckCircle, FiChevronDown, FiChevronLeft, FiChevronRight, FiClipboard, FiDownload, FiEdit3, FiFileText, FiMaximize2, FiMessageSquare, FiMinimize2, FiMoreHorizontal, FiSliders, FiTrash2, FiUploadCloud, FiX } from 'react-icons/fi';
 import type { User } from '@supabase/supabase-js';
 import { AuthModal } from '@/components/auth/auth-modal';
 import { AssetSurface } from '@/components/asset-surface';
@@ -43,6 +43,7 @@ interface ReviewWorkspaceProps {
 }
 
 const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const PIN_COMMENT_HINT_KEY = 'wizerview:onboarding:pin-comment:v1';
 const zoomOptions = [{ value: 'fit', scale: 1, label: 'Fit' }, { value: '50', scale: 0.5, label: '50%' }, { value: '75', scale: 0.75, label: '75%' }, { value: '100', scale: 1, label: '100%' }, { value: '125', scale: 1.25, label: '125%' }, { value: '150', scale: 1.5, label: '150%' }] as const;
 
 function versionLabel(index: number) {
@@ -132,6 +133,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   const [isFeedbackDrawerOpen, setIsFeedbackDrawerOpen] = useState(true);
   const [isShareMenuOpen, setIsShareMenuOpen] = useState(false);
   const [isVersionMenuOpen, setIsVersionMenuOpen] = useState(false);
+  const [isAssetFullscreen, setIsAssetFullscreen] = useState(false);
+  const [showPinHint, setShowPinHint] = useState(false);
+  const [usesTouchPointer, setUsesTouchPointer] = useState(false);
   const [isVersionNameDialogOpen, setIsVersionNameDialogOpen] = useState(false);
   const [isAssetNameDialogOpen, setIsAssetNameDialogOpen] = useState(false);
   const [assetNameDraft, setAssetNameDraft] = useState('');
@@ -291,6 +295,20 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   }, [panelStorageKey, rightPanel]);
 
   useEffect(() => {
+    if (!isAssetFullscreen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsAssetFullscreen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isAssetFullscreen]);
+
+  useEffect(() => {
+    setUsesTouchPointer(window.matchMedia('(pointer: coarse)').matches);
+    setShowPinHint(window.localStorage.getItem(PIN_COMMENT_HINT_KEY) == null);
+  }, []);
+
+  useEffect(() => {
     setBriefDraft(review.brief);
   }, [review.brief]);
 
@@ -301,6 +319,14 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
   useEffect(() => {
     if (isAssetNameDialogOpen) window.requestAnimationFrame(() => assetNameInputRef.current?.focus());
   }, [isAssetNameDialogOpen]);
+
+  useEffect(() => {
+    setIsEditingDeliverableBrief(false);
+  }, [activeAssetId]);
+
+  useEffect(() => {
+    setIsEditingVersionDescription(false);
+  }, [activeAssetId, activeVersionId]);
 
   useEffect(() => {
     const nextObjectUrls = collectObjectUrls(review);
@@ -513,6 +539,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
 
     setActiveAssetId(comment.assetId);
     setActiveVersionId(nextVersionId);
+    setShowPins(true);
     setActiveCommentId(comment.id);
     setCommentFilter('all');
     setOriginFilter('all');
@@ -954,11 +981,18 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
     setIsFeedbackDrawerOpen(true);
   };
 
+  const completePinCommentOnboarding = () => {
+    window.localStorage.setItem(PIN_COMMENT_HINT_KEY, 'completed');
+    setShowPinHint(false);
+  };
+
   const handleAddComment = (assetId: string, assetVersionId: string, x: number, y: number, text: string, author: string, pageNumber?: number) => {
     if (!isCreator && !review.shareSettings.allowComments) {
       setSaveMessage('Comments are disabled for this review.');
       return;
     }
+
+    completePinCommentOnboarding();
 
     if (!requireName()) {
       setPendingComment({ assetId, assetVersionId, x, y, text, author, pageNumber });
@@ -1117,6 +1151,15 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
       decision: decisionSectionRef,
     }[section];
     window.requestAnimationFrame(() => target.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+
+  const toggleRightPanel = (panel: 'context' | 'discussion' | 'review') => {
+    if (isFeedbackDrawerOpen && rightPanel === panel) {
+      setIsFeedbackDrawerOpen(false);
+      return;
+    }
+    setRightPanel(panel);
+    setIsFeedbackDrawerOpen(true);
   };
 
   const saveDeliverableBrief = () => {
@@ -1444,17 +1487,57 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
     );
   };
 
-  const renderContextPanel = () => (
-    <div className="space-y-4">
+  const renderContextPanel = () => {
+    const deliverableNote = activeAsset?.description?.trim() ?? '';
+    const versionNote = typeof activeVersion?.metadata?.description === 'string' ? activeVersion.metadata.description.trim() : '';
+    const versionName = activeVersion?.label ?? 'Selected version';
+
+    return (
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Context</p>
-        <p className="mt-1 text-sm font-semibold text-stone-950">Review guidance and version notes</p>
+        {(hasBriefContent || isCreator) ? (
+          <section>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Review brief</h3>
+              {isCreator && hasBriefContent && !isEditingBrief ? <button type="button" onClick={() => { setBriefDraft(review.brief); setIsEditingBrief(true); }} className="text-xs font-semibold text-stone-600 hover:text-stone-950">Edit</button> : null}
+            </div>
+            {isCreator && isEditingBrief ? (
+              <div className="mt-3 space-y-3">
+                <label className="grid gap-1 text-xs font-semibold text-stone-700">Message<textarea value={briefDraft.message} onChange={(event) => setBriefDraft((current) => ({ ...current, message: event.target.value }))} className="min-h-24 rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-normal text-stone-900" /></label>
+                <label className="grid gap-1 text-xs font-semibold text-stone-700">Focus points<textarea value={briefDraft.focusPoints.join('\n')} onChange={(event) => setBriefDraft((current) => ({ ...current, focusPoints: event.target.value.split('\n') }))} className="min-h-20 rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-normal text-stone-900" /></label>
+                <label className="grid gap-1 text-xs font-semibold text-stone-700">Requested outcome<input value={briefDraft.requestedOutcome} onChange={(event) => setBriefDraft((current) => ({ ...current, requestedOutcome: event.target.value }))} className="rounded-[8px] border border-stone-200 px-3 py-2 text-sm font-normal text-stone-900" /></label>
+                <div className="flex gap-2"><button type="button" onClick={() => setIsEditingBrief(false)} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-600">Cancel</button><button type="button" onClick={handleSaveBrief} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save review brief</button></div>
+              </div>
+            ) : hasBriefContent ? (
+              <div className="mt-3 text-sm leading-6 text-stone-700">
+                {review.brief.message ? <p>{review.brief.message}</p> : null}
+                {review.brief.focusPoints.filter((point) => point.trim()).length ? <ul className="mt-3 list-disc space-y-1 pl-5">{review.brief.focusPoints.filter((point) => point.trim()).map((point) => <li key={point}>{point}</li>)}</ul> : null}
+                {review.brief.requestedOutcome ? <p className="mt-3 font-semibold text-stone-900">{review.brief.requestedOutcome}</p> : null}
+              </div>
+            ) : isCreator ? <button type="button" onClick={() => { setBriefDraft(review.brief); setIsEditingBrief(true); }} className="mt-3 text-sm font-semibold text-stone-700 hover:text-stone-950">+ Add review brief</button> : null}
+          </section>
+        ) : null}
+
+        <section className={`${hasBriefContent || isCreator ? 'mt-5 border-t border-stone-200 pt-5' : ''}`}>
+          <h3 className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">Current selection</h3>
+          <p className="mt-2 text-sm font-semibold text-stone-950">{activeAsset?.title ?? 'No deliverable'}{activeVersion ? ` · ${versionName}` : ''}</p>
+
+          {(deliverableNote || isCreator) ? (
+            <div className="mt-5">
+              <div className="flex items-center justify-between gap-3"><h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">Deliverable note</h4>{isCreator && deliverableNote && !isEditingDeliverableBrief ? <button type="button" onClick={() => { setDeliverableBriefDraft(deliverableNote); setIsEditingDeliverableBrief(true); }} className="text-xs font-semibold text-stone-600 hover:text-stone-950">Edit</button> : null}</div>
+              {isEditingDeliverableBrief ? <div className="mt-3"><textarea value={deliverableBriefDraft} onChange={(event) => setDeliverableBriefDraft(event.target.value)} className="min-h-24 w-full rounded-[8px] border border-stone-200 px-3 py-2 text-sm" /><div className="mt-2 flex gap-2"><button type="button" onClick={() => setIsEditingDeliverableBrief(false)} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-600">Cancel</button><button type="button" onClick={saveDeliverableBrief} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save note</button></div></div> : deliverableNote ? <p className="mt-2 text-sm leading-6 text-stone-700">{deliverableNote}</p> : <button type="button" onClick={() => { setDeliverableBriefDraft(''); setIsEditingDeliverableBrief(true); }} className="mt-2 text-sm font-semibold text-stone-700 hover:text-stone-950">+ Add note</button>}
+            </div>
+          ) : null}
+
+          {(versionNote || isCreator) && activeVersion ? (
+            <div className="mt-5">
+              <div className="flex items-center justify-between gap-3"><h4 className="text-xs font-semibold uppercase tracking-[0.18em] text-stone-500">{versionName} note</h4>{isCreator && versionNote && !isEditingVersionDescription ? <button type="button" onClick={() => { setVersionDescriptionDraft(versionNote); setIsEditingVersionDescription(true); }} className="text-xs font-semibold text-stone-600 hover:text-stone-950">Edit</button> : null}</div>
+              {isEditingVersionDescription ? <div className="mt-3"><textarea value={versionDescriptionDraft} onChange={(event) => setVersionDescriptionDraft(event.target.value)} className="min-h-24 w-full rounded-[8px] border border-stone-200 px-3 py-2 text-sm" /><div className="mt-2 flex gap-2"><button type="button" onClick={() => setIsEditingVersionDescription(false)} className="rounded-[8px] px-3 py-2 text-sm font-semibold text-stone-600">Cancel</button><button type="button" onClick={saveVersionDescription} className="rounded-[8px] bg-stone-950 px-3 py-2 text-sm font-semibold text-white">Save note</button></div></div> : versionNote ? <p className="mt-2 text-sm leading-6 text-stone-700">{versionNote}</p> : <button type="button" onClick={() => { setVersionDescriptionDraft(''); setIsEditingVersionDescription(true); }} className="mt-2 text-sm font-semibold text-stone-700 hover:text-stone-950">+ Add note</button>}
+            </div>
+          ) : null}
+        </section>
       </div>
-      {renderReviewBrief()}
-      {renderDeliverableBrief()}
-      {activeVersion ? renderVersionContext() : null}
-    </div>
-  );
+    );
+  };
 
   const renderReviewPanel = () => (
     <div className="space-y-4">
@@ -1473,16 +1556,15 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
 
   const renderFeedbackRail = () => (
     <aside className="flex min-h-0 self-stretch flex-col items-center gap-2 overflow-hidden border-t border-stone-200 bg-white p-2 lg:fixed lg:bottom-0 lg:right-0 lg:top-[var(--review-shell-top)] lg:z-30 lg:w-16 lg:border-l lg:border-t-0">
-      <button type="button" onClick={() => { setRightPanel('context'); setIsFeedbackDrawerOpen(true); }} aria-label="Open review context" aria-expanded={isFeedbackDrawerOpen && rightPanel === 'context'} title="Context" className={`flex h-11 w-11 items-center justify-center rounded-[10px] ${rightPanel === 'context' && isFeedbackDrawerOpen ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
+      <button type="button" onClick={() => toggleRightPanel('context')} aria-label="Toggle review context" aria-expanded={isFeedbackDrawerOpen && rightPanel === 'context'} aria-pressed={isFeedbackDrawerOpen && rightPanel === 'context'} title="Context" className={`flex h-11 w-11 items-center justify-center rounded-[10px] ${rightPanel === 'context' && isFeedbackDrawerOpen ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}>
         <FiFileText aria-hidden="true" className="h-5 w-5" />
       </button>
       <button
         type="button"
-        onClick={() => {
-          openDrawerSection('discussion');
-        }}
+        onClick={() => toggleRightPanel('discussion')}
         aria-label="Open deliverable discussion"
         aria-expanded={isFeedbackDrawerOpen && rightPanel === 'discussion'}
+        aria-pressed={isFeedbackDrawerOpen && rightPanel === 'discussion'}
         title="Deliverable discussion"
         className={`relative flex h-11 w-11 items-center justify-center rounded-[10px] ${rightPanel === 'discussion' && isFeedbackDrawerOpen ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}
       >
@@ -1491,11 +1573,10 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
       </button>
       <button
         type="button"
-        onClick={() => {
-          openDrawerSection('decision');
-        }}
+        onClick={() => toggleRightPanel('review')}
         aria-label="Open decision progress and finish"
         aria-expanded={isFeedbackDrawerOpen && rightPanel === 'review'}
+        aria-pressed={isFeedbackDrawerOpen && rightPanel === 'review'}
         title="Decision, progress, finish"
         className={`flex h-11 w-11 items-center justify-center rounded-[10px] ${rightPanel === 'review' && isFeedbackDrawerOpen ? 'bg-stone-950 text-white' : 'bg-stone-100 text-stone-700 hover:bg-stone-200'}`}
       >
@@ -1663,8 +1744,8 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
           {uploadMessage ? <p className="mt-3 text-xs leading-5 text-text-subtle">{uploadMessage}</p> : null}
         </aside>
 
-        <div className="relative min-h-0 min-w-0 lg:col-start-2">
-        <section ref={centerScrollRef} onScroll={handleCenterScroll} className="flex min-h-screen min-w-0 flex-col gap-4 px-4 py-4 lg:px-6">
+        <div className={`${isAssetFullscreen ? 'fixed inset-0 z-[70] overflow-hidden bg-canvas' : 'relative lg:col-start-2'} min-h-0 min-w-0`}>
+        <section ref={centerScrollRef} onScroll={handleCenterScroll} className={`flex min-w-0 flex-col gap-4 px-4 py-4 lg:px-6 ${isAssetFullscreen ? 'h-full overflow-auto' : 'min-h-screen'}`}>
           <input
             ref={fileInputRef}
             type="file"
@@ -1708,6 +1789,9 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
                   <FiDownload aria-hidden="true" className="h-4 w-4" />
                 </button>
               ) : null}
+              <button type="button" onClick={() => setIsAssetFullscreen((current) => !current)} className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] border border-stone-200 bg-white text-stone-700 hover:bg-stone-50" aria-label={isAssetFullscreen ? 'Exit asset fullscreen' : 'Open asset fullscreen'} title={isAssetFullscreen ? 'Exit fullscreen (Esc)' : 'Fullscreen asset'}>
+                {isAssetFullscreen ? <FiMinimize2 aria-hidden="true" className="h-4 w-4" /> : <FiMaximize2 aria-hidden="true" className="h-4 w-4" />}
+              </button>
               <button type="button" onClick={() => setIsVersionMenuOpen((current) => !current)} className="inline-flex h-9 w-9 items-center justify-center rounded-[8px] border border-stone-200 bg-white text-stone-700 hover:bg-stone-50" aria-label="More view and version options" title="More options">
                 <FiMoreHorizontal aria-hidden="true" className="h-4 w-4" />
               </button>
@@ -1725,6 +1809,19 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
 
           <div className="flex min-h-[calc(100vh-220px)] flex-col pb-10">
             <div className="relative flex-1">
+              {showPinHint && activeVersionHasPreview && showPins && (isCreator || review.shareSettings.allowComments) ? (
+                <div className="pointer-events-none absolute left-1/2 top-4 z-30 w-[min(92%,360px)] -translate-x-1/2">
+                  <div className="pointer-events-auto flex items-start gap-3 rounded-[10px] border border-stone-200 bg-white/95 px-3 py-2.5 text-stone-700 shadow-lg backdrop-blur">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-stone-950">{usesTouchPointer ? 'Tap' : 'Click'} anywhere on the preview to leave a comment</p>
+                      <p className="mt-0.5 text-xs leading-5 text-stone-500">Your comment will be pinned to that spot.</p>
+                    </div>
+                    <button type="button" onClick={completePinCommentOnboarding} className="flex h-6 w-6 flex-none items-center justify-center rounded-md text-stone-500 hover:bg-stone-100 hover:text-stone-950" aria-label="Dismiss pinned comment hint" title="Dismiss">
+                      <FiX aria-hidden="true" className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {activeAsset ? (
                 <>
                   {isCreator && activeVersion && !activeVersionHasPreview ? (
@@ -1782,6 +1879,7 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
                           pageNumber={activeAsset.assetType === 'pdf' ? activePdfPage : undefined}
                           activeCommentId={activeCommentId}
                           onSelectComment={(commentId) => {
+                            setIsAssetFullscreen(false);
                             setActiveCommentId(commentId);
                             setCommentFilter('all');
                             setOriginFilter('all');
@@ -1820,14 +1918,11 @@ export function ReviewWorkspace({ mode, reviewId, shareToken, initialReview, aut
           className={`${isFeedbackDrawerOpen ? 'fixed inset-x-0 bottom-0 top-0 z-40 flex lg:bottom-0 lg:left-auto lg:right-16 lg:top-[var(--review-shell-top)] lg:w-[396px]' : 'hidden'} min-h-0 flex-col overflow-hidden border-l border-stone-200 bg-white p-4 shadow-xl`}
           aria-hidden={!isFeedbackDrawerOpen}
         >
-          <div className="flex items-center justify-between gap-3 border-b border-stone-200 pb-3">
+          <div className="border-b border-stone-200 pb-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-stone-500">{rightPanel}</p>
-              <p className="mt-1 text-sm font-semibold text-stone-950">{activeAsset?.title ?? review.title}</p>
+              {rightPanel !== 'context' ? <p className="mt-1 text-sm font-semibold text-stone-950">{activeAsset?.title ?? review.title}</p> : null}
             </div>
-            <button type="button" onClick={() => setIsFeedbackDrawerOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-[8px] border border-stone-200 text-stone-600 hover:bg-stone-50" aria-label="Close review drawer">
-              <FiX aria-hidden="true" className="h-4 w-4" />
-            </button>
           </div>
           <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
             {rightPanel === 'context' ? renderContextPanel() : rightPanel === 'discussion' ? renderNotesPanel() : renderReviewPanel()}
