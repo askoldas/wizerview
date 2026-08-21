@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type MouseEvent } from 'react';
+import { FiX } from 'react-icons/fi';
 import type { AssetVersion, Comment, ReviewAsset } from '@/lib/mock-data';
 
 interface PinCommentLayerProps {
@@ -93,7 +94,21 @@ export function PinCommentLayer({ asset, version, comments, onAddComment, active
           }}
           onClick={(event) => event.stopPropagation()}
         >
-          <p className="text-sm font-semibold text-stone-950">Add a pinned note</p>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-semibold text-stone-950">Add a pinned note</p>
+            <button
+              type="button"
+              onClick={() => {
+                setDraftText('');
+                setActivePin(null);
+              }}
+              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-stone-500 hover:bg-stone-100 hover:text-stone-950"
+              aria-label="Cancel pinned note"
+              title="Cancel"
+            >
+              <FiX aria-hidden="true" className="h-4 w-4" />
+            </button>
+          </div>
           <textarea
             value={draftText}
             onChange={(event) => setDraftText(event.target.value)}
